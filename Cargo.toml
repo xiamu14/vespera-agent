@@ -1,0 +1,29 @@
+[package]
+name = "vespera"
+version = "0.1.0"
+edition = "2024"
+description = "Vespera static GPUI desktop"
+publish = false
+
+[dependencies]
+gpui-kit = "=0.9.0"
+rust-embed = "8.13"
+anyhow = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSSound"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData"] }
+
+[profile.dev]
+debug = 0
+
+[profile.release]
+strip = true
+
+[features]
+visual-check = ["gpui-kit/test-support"]
+
+[[example]]
+name = "visual_check"
+required-features = ["visual-check"]
