@@ -166,25 +166,31 @@ fn main() -> anyhow::Result<()> {
         for frame in 0..180 {
             let start = std::time::Instant::now();
             cx.update_window(window.into(), |_, window, cx| {
-                window.dispatch_event(
-                    PlatformInput::Scroll(ScrollEvent {
-                        position: point(px(x), px(400.)),
-                        delta: ScrollDelta::Pixels(point(
-                            px(0.),
-                            px(if frame % 60 < 30 { -8. } else { 8. }),
-                        )),
-                        ..Default::default()
-                    }),
-                    cx,
-                );
+                for _ in 0..3 {
+                    window.dispatch_event(
+                        PlatformInput::Scroll(ScrollEvent {
+                            position: point(px(x), px(400.)),
+                            delta: ScrollDelta::Lines(point(
+                                0.,
+                                if frame % 24 < 12 { -0.5 } else { 0.5 },
+                            )),
+                            ..Default::default()
+                        }),
+                        cx,
+                    );
+                }
                 window.draw(cx).clear(cx);
             })?;
             times.push(start.elapsed().as_secs_f64() * 1000.);
         }
         times.sort_by(f64::total_cmp);
+        let over_budget = times.iter().filter(|&&ms| ms > 1000. / 60.).count();
         println!(
-            "{name}: CPU dispatch+draw p50={:.2}ms p95={:.2}ms max={:.2}ms (not display FPS)",
-            times[90], times[171], times[179]
+            "{name}: CPU dispatch+draw p50={:.2}ms p95={:.2}ms max={:.2}ms, over 16.67ms={over_budget}/{}",
+            times[90],
+            times[171],
+            times[179],
+            times.len()
         );
     }
     for (width, height) in [(1140., 800.), (1280., 800.), (1920., 1080.)] {

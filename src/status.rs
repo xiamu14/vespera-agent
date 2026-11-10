@@ -66,17 +66,19 @@ fn directory() -> Div {
 
 fn context() -> Div {
     inspector_section(label("运行上下文", 16.)).child(
-        column()
-            .gap(px(8.))
-            .pl(px(9.))
-            .child(muted("模型  GPT-6.2 Sol 中", 16.))
-            .child(muted("上下文  24%", 16.))
-            .child(
+        column().gap(px(8.)).pl(px(9.)).children(
+            [
+                ("模型", "GPT-6.2 Sol 中"),
+                ("上下文", "24%"),
+                ("今日消耗", "$12"),
+            ]
+            .into_iter()
+            .map(|(title, value)| {
                 row()
-                    .gap(px(12.))
-                    .child(muted("今日消耗  $12", 16.))
-                    .child(usage_ring()),
-            ),
+                    .child(muted(title, 14.).w(px(72.)).flex_shrink_0())
+                    .child(muted(value, 14.))
+            }),
+        ),
     )
 }
 

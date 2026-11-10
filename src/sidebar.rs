@@ -46,7 +46,7 @@ fn account() -> Div {
                 .justify_between()
                 .h(px(26.))
                 .child(muted("今日消耗", 14.))
-                .child(label("$12", 14.)),
+                .child(usage_ring()),
         )
         .child(
             row().justify_between().h(px(32.)).child(
@@ -98,7 +98,7 @@ pub fn sidebar(width: f32, search: &Entity<InputState>, cx: &App) -> Div {
                         .bg(rgb(PRIMARY_WASH))
                         .text_color(rgb(PRIMARY))
                         .child(icon("new-chat-plus", 15., PRIMARY))
-                        .child(label("新聊天", 16.).font(emphasis_font())),
+                        .child(label("新聊天", 16.)),
                 ),
         )
         .child(

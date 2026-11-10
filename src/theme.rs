@@ -160,23 +160,28 @@ pub fn fade(height: f32) -> Div {
         .left_0()
         .w_full()
         .h(px(height))
-        .bg(linear_gradient(
-            180.,
-            linear_color_stop(hsla(0., 0., 0.992, 0.), 0.),
-            linear_color_stop(hsla(0., 0., 0.992, 1.), 1.),
-        ))
+        .bg(fade_gradient(1.))
+}
+
+pub fn fade_gradient(opacity: f32) -> Background {
+    linear_gradient(
+        180.,
+        linear_color_stop(hsla(0., 0., 0.992, 0.), 0.),
+        linear_color_stop(hsla(0., 0., 0.992, opacity), 1.),
+    )
 }
 
 pub fn usage_ring() -> Div {
+    const SIZE: f32 = 12.;
     div()
         .relative()
-        .size(px(20.))
-        .child(icon("usage-track", 20., PRIMARY_WASH))
+        .size(px(SIZE))
+        .child(icon("usage-track", SIZE, PRIMARY_WASH))
         .child(
             div()
                 .absolute()
                 .inset_0()
-                .child(icon("progress", 20., PRIMARY)),
+                .child(icon("progress", SIZE, PRIMARY)),
         )
 }
 
