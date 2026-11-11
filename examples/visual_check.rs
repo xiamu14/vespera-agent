@@ -195,9 +195,7 @@ fn main() -> anyhow::Result<()> {
     }
     for (width, height) in [(1140., 800.), (1280., 800.), (1920., 1080.)] {
         let window = cx.open_window(size(px(width), px(height)), |window, cx| {
-            let view = cx.new(|_| Vespera {
-                tab: InspectorTab::Memory,
-            });
+            let view = cx.new(|_| Vespera::preview(InspectorTab::Memory));
             cx.new(|cx| Root::new(view, window, cx))
         })?;
         for _ in 0..3 {

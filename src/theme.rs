@@ -69,7 +69,7 @@ pub fn muted(value: impl Into<SharedString>, size: f32) -> Div {
     label(value, size).text_color(rgb(MUTED))
 }
 
-pub fn timeline_time(time: &'static str, alpha: f32) -> Div {
+pub fn timeline_time(time: impl Into<SharedString>, alpha: f32) -> Div {
     row()
         .flex_shrink_0()
         .gap(px(12.))
@@ -109,6 +109,47 @@ pub fn card() -> Div {
             blur_radius: px(6.),
             spread_radius: px(0.),
         }])
+}
+
+pub fn chat_card() -> Div {
+    card()
+        .rounded(px(0.))
+        .bg(hsla(0., 0., 0., 0.))
+        .border_color(hsla(0., 0., 0., 0.))
+        .shadow(Vec::<BoxShadow>::new())
+        .child(
+            canvas(
+                |_, _, _| (),
+                |bounds, (), window, _| {
+                    let radius = limited_radius(
+                        PANEL_RADIUS,
+                        bounds.size.width.min(bounds.size.height).into(),
+                    );
+                    let corners = Corners::all(radius);
+                    window.paint_drop_shadows(
+                        bounds,
+                        corners,
+                        &[BoxShadow {
+                            inset: false,
+                            color: rgba(0x00000002).into(),
+                            offset: point(px(0.), px(1.)),
+                            blur_radius: px(6.),
+                            spread_radius: px(0.),
+                        }],
+                    );
+                    window.paint_quad(quad(
+                        bounds,
+                        corners,
+                        rgb(BACKGROUND),
+                        Edges::all(px(1.)),
+                        rgb(BORDER),
+                        BorderStyle::default(),
+                    ));
+                },
+            )
+            .absolute()
+            .inset_0(),
+        )
 }
 
 pub fn inspector_section(header: Div) -> Div {
@@ -171,24 +212,76 @@ pub fn fade_gradient(opacity: f32) -> Background {
     )
 }
 
-pub fn usage_ring() -> Div {
+fn usage_fraction(cost: f64, budget: f64) -> f32 {
+    if !cost.is_finite() || !budget.is_finite() || budget <= 0. {
+        return 0.;
+    }
+    (cost / budget).clamp(0., 1.) as f32
+}
+
+pub fn usage_ring(usage: Option<(f64, f64)>) -> Div {
     const SIZE: f32 = 12.;
+    let fraction = usage
+        .map(|(cost, budget)| usage_fraction(cost, budget))
+        .unwrap_or(0.);
     div()
         .relative()
         .size(px(SIZE))
         .child(icon("usage-track", SIZE, PRIMARY_WASH))
         .child(
-            div()
-                .absolute()
-                .inset_0()
-                .child(icon("progress", SIZE, PRIMARY)),
+            canvas(
+                |_, _, _| (),
+                move |bounds, (), window, _| {
+                    if fraction == 0. {
+                        return;
+                    }
+                    let center = bounds.center();
+                    let position = |portion: f32| {
+                        let angle = -std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * portion;
+                        center + point(px(SIZE * 0.4 * angle.cos()), px(SIZE * 0.4 * angle.sin()))
+                    };
+                    let mut path = PathBuilder::stroke(px(1.8));
+                    path.move_to(position(0.));
+                    let steps = (fraction * 64.).ceil() as usize;
+                    for step in 1..=steps {
+                        path.line_to(position(fraction * step as f32 / steps as f32));
+                    }
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, rgb(PRIMARY));
+                    }
+                    for end in [0., fraction] {
+                        let mut cap = fill(
+                            Bounds::new(
+                                position(end) - point(px(0.9), px(0.9)),
+                                size(px(1.8), px(1.8)),
+                            ),
+                            rgb(PRIMARY),
+                        );
+                        cap.corner_radii = Corners::all(px(0.9));
+                        window.paint_quad(cap);
+                    }
+                },
+            )
+            .absolute()
+            .inset_0(),
         )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{column_widths, limited_radius};
+    use super::{column_widths, limited_radius, usage_fraction};
     use gpui_kit::px;
+
+    #[test]
+    fn daily_budget_ring_clamps_actual_spend() {
+        assert_eq!(usage_fraction(0., 1.), 0.);
+        assert!((usage_fraction(0.11, 1.) - 0.11).abs() < 0.0001);
+        assert_eq!(usage_fraction(0.5, 2.), 0.25);
+        assert_eq!(usage_fraction(1., 1.), 1.);
+        assert_eq!(usage_fraction(2., 1.), 1.);
+        assert_eq!(usage_fraction(f64::NAN, 1.), 0.);
+        assert_eq!(usage_fraction(1., 0.), 0.);
+    }
 
     #[test]
     fn small_surfaces_limit_their_corner_radius() {

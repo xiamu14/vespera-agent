@@ -54,8 +54,13 @@ impl Startup {
             .detach();
         });
 
+        let page = cx.new(Vespera::new);
+        let view = page.downgrade();
+        App::on_action(cx, move |_: &crate::ReloadChats, cx| {
+            let _ = view.update(cx, |this, cx| this.reload_chats(cx));
+        });
         Self {
-            page: cx.new(|_| Vespera::default()),
+            page,
             started: None,
             gradient_phase: RandomState::new().hash_one(0_u8) as f32 / u64::MAX as f32 * TAU,
             finished: false,

@@ -8,14 +8,29 @@ use std::{sync::LazyLock, time::Instant};
 
 static CARET_EPOCH: LazyLock<Instant> = LazyLock::new(Instant::now);
 
-fn caret_breath(seconds: f32) -> f32 {
-    let phase = seconds.rem_euclid(1.4) / 0.7;
-    let progress = 1. - (phase - 1.).abs();
-    // Quintic ease-in-out keeps velocity and acceleration zero at both reversals.
-    progress * progress * progress * (progress * (progress * 6. - 15.) + 10.)
+pub(crate) fn path_reference(path: &str, folder: bool) -> InlineToken {
+    let kind = if folder { "目录" } else { "文件" };
+    let quoted = serde_json::to_string(path).expect("a string is serializable");
+    let name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(path);
+    InlineToken::new(format!("path:{path}"), format!("［{kind}引用：{quoted}］"))
+        .with_label(name.to_owned())
 }
 
-fn editor_style() -> InputEditorStyle {
+fn caret_scale(seconds: f32) -> f32 {
+    let phase = seconds.rem_euclid(1.);
+    if phase < 0.7 {
+        1.
+    } else if phase < 0.85 {
+        (1. - (phase - 0.7) / 0.15).powi(4)
+    } else {
+        1. - (1. - (phase - 0.85) / 0.15).powi(4)
+    }
+}
+
+pub(crate) fn editor_style() -> InputEditorStyle {
     InputEditorStyle {
         foreground: rgb(INK).into(),
         muted_foreground: rgb(MUTED).into(),
@@ -32,17 +47,26 @@ fn capsule(
         |_, _, _| (),
         move |viewport, (), window, cx| {
             if let Some(mut bounds) = bounds(window, cx) {
-                let breath = caret_breath(CARET_EPOCH.elapsed().as_secs_f32());
+                let scale = if cx.reduce_motion() {
+                    1.
+                } else {
+                    caret_scale(CARET_EPOCH.elapsed().as_secs_f32())
+                };
                 let width = px(2.);
                 bounds.size.width = width;
+                let height = (bounds.size.height - px(4.)).max(px(0.)) * scale;
+                bounds.origin.y += (bounds.size.height - height) / 2.;
+                bounds.size.height = height;
                 bounds.origin.x =
                     (bounds.origin.x - width / 2.).clamp(viewport.left(), viewport.right() - width);
                 let mut color: Hsla = rgb(PRIMARY).into();
-                color.l += (1. - color.l) * 0.3 * breath;
+                color.a = scale;
                 let mut caret = fill(bounds, color);
                 caret.corner_radii = Corners::all(width / 2.);
                 window.paint_quad(caret);
-                window.request_animation_frame();
+                if !cx.reduce_motion() {
+                    window.request_animation_frame();
+                }
             }
         },
     )
@@ -84,7 +108,7 @@ pub fn search(window: &mut Window, cx: &mut App) -> Entity<InputState> {
     state
 }
 
-pub fn search_field(state: &Entity<InputState>) -> Div {
+pub fn input_field(state: &Entity<InputState>) -> Div {
     let focus_state = state.clone();
     div()
         .on_mouse_down_out(move |_, window, cx| {
@@ -103,9 +127,18 @@ pub fn search_field(state: &Entity<InputState>) -> Div {
         .child(caret!(state))
 }
 
-pub fn draft(window: &mut Window, cx: &mut App) -> Entity<TextareaState> {
-    let state = window.use_keyed_state("message-draft", cx, |window, cx| {
-        let mut state = TextareaState::new(window, cx).rows(2);
+pub fn draft(
+    window: &mut Window,
+    cx: &mut App,
+    preview: bool,
+    conversation_id: Option<&str>,
+) -> Entity<TextareaState> {
+    let key = SharedString::from(format!(
+        "message-draft-{}",
+        conversation_id.unwrap_or_default()
+    ));
+    let state = window.use_keyed_state(key, cx, |window, cx| {
+        let mut state = TextareaState::new(window, cx).rows(2).submit_on_enter(true);
         state.set_editor_style(InputEditorStyle {
             // A zero alpha would restore GPUI's square default selection.
             selection: hsla(0., 0., 0., f32::EPSILON),
@@ -113,18 +146,20 @@ pub fn draft(window: &mut Window, cx: &mut App) -> Entity<TextareaState> {
         });
         state
     });
-    window.use_keyed_state("seed-message-draft", cx, |window, cx| {
-        let prefix = "使用 ";
-        let attachment = "界面截图";
-        let text = format!("{prefix}{attachment} ");
-        let content = InputContent::new(text)
-            .with_token(
-                prefix.len()..prefix.len() + attachment.len(),
-                InlineToken::new("screenshot", attachment),
-            )
-            .expect("the fixture token matches its text");
-        state.update(cx, |state, cx| state.set_value(content, window, cx));
-    });
+    if preview {
+        window.use_keyed_state("seed-message-draft", cx, |window, cx| {
+            let prefix = "使用 ";
+            let attachment = "界面截图";
+            let text = format!("{prefix}{attachment} ");
+            let content = InputContent::new(text)
+                .with_token(
+                    prefix.len()..prefix.len() + attachment.len(),
+                    InlineToken::new("screenshot", attachment),
+                )
+                .expect("the fixture token matches its text");
+            state.update(cx, |state, cx| state.set_value(content, window, cx));
+        });
+    }
     state
 }
 
@@ -201,36 +236,55 @@ pub fn draft_field(state: &Entity<TextareaState>) -> Div {
         .text_size(px(14.))
         .line_height(px(24.))
         .child(draft_selection(state.clone()))
-        .child(Textarea::new(state).token(|token, _, _| {
-            label("界面截图", 14.)
-                .px(px(7.))
-                .py(px(2.))
-                .rounded(px(if token.is_selected() {
-                    SELECTION_RADIUS
-                } else {
-                    DETAIL_RADIUS
-                }))
-                .bg(rgb(if token.is_selected() {
-                    PRIMARY_WASH
-                } else {
-                    0xfff9e9
-                }))
-                .text_color(rgb(0xbb731c))
-        }))
+        .child(Textarea::new(state).token(|token, _, _| reference_label(token)))
         .child(caret!(state))
+}
+
+pub(crate) fn reference_label(token: &gpui_kit::base::input::InlineTokenContext) -> Div {
+    label(token.token().label().clone(), 14.)
+        .px(px(7.))
+        .py(px(2.))
+        .rounded(px(if token.is_selected() {
+            SELECTION_RADIUS
+        } else {
+            DETAIL_RADIUS
+        }))
+        .bg(rgb(if token.is_selected() {
+            PRIMARY_WASH
+        } else {
+            0xfff9e9
+        }))
+        .text_color(rgb(0xbb731c))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::caret_breath;
+    use super::{caret_scale, path_reference};
 
     #[test]
-    fn caret_breathes_from_primary_toward_brighter_and_back() {
-        assert!(caret_breath(0.).abs() < 0.001);
-        assert!((caret_breath(0.7) - 1.).abs() < 0.001);
-        assert!(caret_breath(1.4).abs() < 0.001);
-        assert!(caret_breath(0.175) < 0.25);
-        assert!(caret_breath(0.525) > 0.75);
-        assert!((caret_breath(0.175) - caret_breath(1.225)).abs() < 0.001);
+    fn reference_keeps_the_full_path_for_the_agent_and_a_short_label() {
+        let path = "/workspace/项目/a \"quoted\".rs";
+        let token = path_reference(path, false);
+        assert_eq!(token.label().as_ref(), "a \"quoted\".rs");
+        assert!(token.text().contains(&serde_json::to_string(path).unwrap()));
+        assert!(
+            path_reference("/workspace/src", true)
+                .text()
+                .contains("目录引用")
+        );
+    }
+
+    #[test]
+    fn caret_hides_and_returns_in_150ms() {
+        for (seconds, expected) in [
+            (0., 1.),
+            (0.7, 1.),
+            (0.775, 0.0625),
+            (0.85, 0.),
+            (0.925, 0.9375),
+            (1., 1.),
+        ] {
+            assert!((caret_scale(seconds) - expected).abs() < 0.001);
+        }
     }
 }

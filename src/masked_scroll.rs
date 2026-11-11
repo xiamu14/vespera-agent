@@ -5,26 +5,40 @@ use gpui_kit::*;
 
 #[derive(IntoElement)]
 pub struct MaskedScroll {
-    id: &'static str,
+    id: SharedString,
     mask_height: f32,
     bottom_overlay: f32,
     scrollbar: bool,
     content: Div,
+    follow_bottom: bool,
+    external_scroll: Option<ScrollHandle>,
 }
 
 impl MaskedScroll {
-    pub fn new(id: &'static str, mask_height: f32, content: Div) -> Self {
+    pub fn new(id: impl Into<SharedString>, mask_height: f32, content: Div) -> Self {
         Self {
-            id,
+            id: id.into(),
             mask_height,
             bottom_overlay: 0.,
             scrollbar: false,
             content,
+            follow_bottom: false,
+            external_scroll: None,
         }
     }
 
     pub fn bottom_overlay(mut self, height: f32) -> Self {
         self.bottom_overlay = height;
+        self
+    }
+
+    pub fn scroll_handle(mut self, handle: ScrollHandle) -> Self {
+        self.external_scroll = Some(handle);
+        self
+    }
+
+    pub fn follow_bottom(mut self, follow: bool) -> Self {
+        self.follow_bottom = follow;
         self
     }
 
@@ -40,9 +54,14 @@ fn fade_opacity(remaining: Pixels) -> f32 {
 
 impl RenderOnce for MaskedScroll {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.id, cx, |_, _| (ScrollHandle::new(), false));
-        let (scroll, overflow) = state.read(cx).clone();
+        let state =
+            window.use_keyed_state(self.id.clone(), cx, |_, _| (ScrollHandle::new(), false));
+        let (internal, overflow) = state.read(cx).clone();
+        let scroll = self.external_scroll.unwrap_or(internal);
         let overlay = self.bottom_overlay;
+        if self.follow_bottom && scroll.max_offset().y + scroll.offset().y < px(40.) {
+            scroll.scroll_to_bottom();
+        }
         let scrollbar =
             (self.scrollbar && overflow).then(|| crate::chat_scrollbar::chat_scrollbar(&scroll));
 

@@ -68,12 +68,13 @@ impl MarkdownPlugin for Semibold {
 pub fn markdown_surface(view: TextView) -> Div {
     div()
         .relative()
+        .text_size(px(15.))
         .child(view)
         // GPUI renders links with a hand cursor inside its Markdown element.
         .child(div().absolute().inset_0().cursor_default())
 }
 
-pub fn markdown(id: &'static str, source: &'static str) -> TextView {
+pub fn markdown(id: impl Into<ElementId>, source: impl Into<SharedString>) -> TextView {
     let style = TextViewStyle::default()
         .with_foreground(rgb(INK).into())
         .with_muted_foreground(rgb(MUTED).into())
@@ -92,13 +93,8 @@ pub fn markdown(id: &'static str, source: &'static str) -> TextView {
                 .text_size(px(14.)),
         )
         .with_heading(|level| {
-            let size = match level {
-                1 => 20.,
-                2 => 18.,
-                _ => 16.,
-            };
             StyleRefinement::default()
-                .text_size(px(size))
+                .text_size(px(if level == 1 { 18. } else { 16. }))
                 .font(emphasis_font())
                 .pt(px(0.))
                 .pb(px(8.))

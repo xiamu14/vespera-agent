@@ -9,3 +9,5 @@
 
 Cargo.lock records the exact Rust dependency graph. This local development bundle
 is not a notarized public distribution.
+
+- Bundled CPython includes its license at `Resources/python/lib/python3.13/LICENSE.txt`. Python dependencies retain the license files and metadata included in their distributions.

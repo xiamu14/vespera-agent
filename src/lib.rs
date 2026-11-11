@@ -1,18 +1,38 @@
+#[cfg(target_os = "macos")]
+pub mod agent_bridge;
 mod app;
 mod artifacts;
 pub mod assets;
 mod chat;
+mod chat_controller;
+mod chat_data;
+mod chat_history;
 mod chat_scrollbar;
+mod chat_state;
+mod chat_timeline;
+mod file_tree;
 mod fixtures;
+mod history_cards;
+mod inspector;
+mod live_chat;
+mod live_state;
 mod markdown;
 mod masked_scroll;
 mod memory;
+mod message_references;
+mod new_chat_dialog;
 mod project_group;
+mod question_card;
+mod response_time;
 mod sidebar;
 mod startup;
 mod status;
+mod system_notification;
 mod text_fields;
 mod theme;
+mod thinking;
+mod tool_section;
 
 pub use app::{InspectorTab, Vespera};
+pub use chat_controller::ReloadChats;
 pub use startup::Startup;

@@ -130,3 +130,33 @@ pub fn artifacts() -> Div {
         .child(video())
         .child(audio())
 }
+
+pub fn live(data: Option<&crate::inspector::Inspection>) -> Div {
+    column()
+        .w_full()
+        .gap(px(20.))
+        .children(
+            data.into_iter()
+                .flat_map(|data| &data.artifacts)
+                .map(|artifact| {
+                    let action = match artifact.action.as_str() {
+                        "edit_file" => "已编辑文件",
+                        "create_directory" => "已创建目录",
+                        _ => "已写入文件",
+                    };
+                    card()
+                        .p(px(14.))
+                        .gap(px(8.))
+                        .child(
+                            row()
+                                .gap(px(12.))
+                                .child(timeline_time(
+                                    crate::inspector::time_label(&artifact.timestamp),
+                                    1.,
+                                ))
+                                .child(label(action, 14.)),
+                        )
+                        .child(muted(artifact.path.clone(), 14.).min_w_0().truncate())
+                }),
+        )
+}

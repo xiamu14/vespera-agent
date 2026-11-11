@@ -9,7 +9,8 @@ const GUIDE_COLOR: u32 = 0xe8e8ea;
 
 #[derive(IntoElement)]
 pub struct ProjectGroup {
-    pub name: &'static str,
+    pub id: SharedString,
+    pub name: SharedString,
     pub folder: bool,
     pub has_active_chat: bool,
     pub items: Vec<Div>,
@@ -36,7 +37,7 @@ fn interpolate(from: f32, to: f32, time: f32) -> f32 {
 
 impl RenderOnce for ProjectGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let state = window.use_keyed_state(self.name, cx, |_, _| Expansion {
+        let state = window.use_keyed_state(self.id.clone(), cx, |_, _| Expansion {
             expanded: true,
             from: 1.,
             started: Instant::now(),
@@ -57,7 +58,7 @@ impl RenderOnce for ProjectGroup {
             .w_full()
             .child(
                 row()
-                    .id(self.name)
+                    .id(self.id)
                     .h(px(GROUP_HEIGHT))
                     .px(px(10.))
                     .gap(px(8.))
@@ -74,7 +75,7 @@ impl RenderOnce for ProjectGroup {
                         MUTED,
                     ))
                     .child(
-                        label(self.name, 18.)
+                        label(self.name, 16.)
                             .flex_1()
                             .min_w_0()
                             .when(self.has_active_chat, |title| title.font(emphasis_font()))

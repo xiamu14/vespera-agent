@@ -34,9 +34,72 @@ impl InspectorTab {
 #[derive(Default)]
 pub struct Vespera {
     pub tab: InspectorTab,
+    pub(crate) timeline: crate::chat_timeline::ChatTimeline,
+    pub(crate) chats: Option<crate::chat_state::Chats>,
+    search_observed: bool,
+    observed_draft: Option<EntityId>,
+    drafts: std::collections::HashMap<String, Entity<gpui_kit::base::input::TextareaState>>,
+    draft_subscriptions: Vec<Subscription>,
+    pub(crate) live: crate::live_chat::LiveChat,
+    pub(crate) inspection: crate::inspector::InspectionState,
+    pub(crate) reset_search: bool,
+    pub(crate) no_search_matches: bool,
+    pub(crate) search_query: String,
 }
 
 impl Vespera {
+    pub(crate) fn reference_path(
+        &mut self,
+        conversation_id: &str,
+        path: &std::path::Path,
+        folder: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self
+            .chats
+            .as_ref()
+            .and_then(|chats| chats.selected.as_deref())
+            != Some(conversation_id)
+        {
+            return;
+        }
+        let Some(path) = path.to_str() else {
+            crate::system_notification::notify("无法添加引用", "路径包含无法保存的字符。");
+            return;
+        };
+        let Some(draft) = self.drafts.get(conversation_id) else {
+            return;
+        };
+        let token = crate::text_fields::path_reference(path, folder);
+        draft.update(cx, |draft, cx| {
+            if draft.replace_with_token(token, window, cx).is_err() {
+                crate::system_notification::notify("无法添加引用", "文件名包含不支持的字符。");
+                return;
+            }
+            draft.focus_handle(cx).focus(window, cx);
+        });
+        cx.notify();
+    }
+}
+
+impl Vespera {
+    pub fn preview(tab: InspectorTab) -> Self {
+        Self {
+            tab,
+            ..Self::default()
+        }
+    }
+
+    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        let mut this = Self::default();
+        if crate::agent_bridge::AgentBridge::is_bundled() {
+            this.chats = Some(Default::default());
+            this.reload_list(cx);
+        }
+        this
+    }
+
     fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
         const RADIUS: f32 = 16.;
         const PADDING: f32 = 5.;
@@ -83,16 +146,36 @@ impl Vespera {
     }
 
     fn inspector(&self, cx: &mut Context<Self>) -> Div {
-        let content = match self.tab {
-            // The second timeline entry is the latest message in this mock.
-            InspectorTab::Status => status::status(&fixtures::TIMELINE[..2]).into_any_element(),
-            InspectorTab::Artifacts => {
-                MaskedScroll::new("inspector-content", 64., artifacts::artifacts())
-                    .into_any_element()
+        let selected = self
+            .chats
+            .as_ref()
+            .and_then(|chats| chats.selected.as_deref());
+        let data = self.inspection.data(selected);
+        let content = match (self.tab, self.chats.is_some()) {
+            (InspectorTab::Status, false) => {
+                status::status(&fixtures::TIMELINE[..2]).into_any_element()
             }
-            InspectorTab::Memory => {
-                MaskedScroll::new("inspector-content", 64., memory::memory()).into_any_element()
-            }
+            (InspectorTab::Status, true) => status::live(data, self, cx).into_any_element(),
+            (InspectorTab::Artifacts, live) => MaskedScroll::new(
+                "inspector-content",
+                64.,
+                if live {
+                    artifacts::live(data)
+                } else {
+                    artifacts::artifacts()
+                },
+            )
+            .into_any_element(),
+            (InspectorTab::Memory, live) => MaskedScroll::new(
+                "inspector-content",
+                64.,
+                if live {
+                    memory::live(data)
+                } else {
+                    memory::memory()
+                },
+            )
+            .into_any_element(),
         };
         column()
             .flex_1()
@@ -101,7 +184,7 @@ impl Vespera {
             .pt(px(PANEL_TOP))
             .pl(px(30.))
             .pr(px(20.))
-            .pb(px(44.))
+            .pb(px(PANEL_TOP))
             .gap(px(20.))
             .child(self.tab_bar(cx))
             .child(content)
@@ -110,8 +193,70 @@ impl Vespera {
 
 impl Render for Vespera {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = self.chats.as_ref().and_then(|chats| chats.selected.clone());
+        if self.timeline.conversation_id != selected {
+            self.timeline = crate::chat_timeline::ChatTimeline {
+                conversation_id: selected,
+                ..Default::default()
+            };
+        }
         let search = crate::text_fields::search(window, cx);
-        let draft = crate::text_fields::draft(window, cx);
+        if self.chats.is_some() && !self.search_observed {
+            self.search_observed = true;
+            cx.observe(&search, |this, search, cx| {
+                this.search_query = search.read(cx).value().trim().to_lowercase();
+                this.update_search_status();
+                cx.notify();
+            })
+            .detach();
+        }
+        if std::mem::take(&mut self.reset_search) {
+            self.search_query.clear();
+            self.no_search_matches = false;
+            search.update(cx, |search, cx| search.set_value("", window, cx));
+        }
+        let conversation_id = self
+            .chats
+            .as_ref()
+            .and_then(|chats| chats.selected.as_deref());
+        let draft_key = conversation_id.unwrap_or_default().to_owned();
+        let draft = self
+            .drafts
+            .entry(draft_key)
+            .or_insert_with(|| {
+                crate::text_fields::draft(window, cx, self.chats.is_none(), conversation_id)
+            })
+            .clone();
+        if self.observed_draft != Some(draft.entity_id()) {
+            self.observed_draft = Some(draft.entity_id());
+            self.draft_subscriptions.clear();
+            self.draft_subscriptions
+                .push(cx.observe(&draft, |_, _, cx| cx.notify()));
+            if self.chats.is_some() {
+                self.draft_subscriptions.push(cx.subscribe_in(
+                    &draft,
+                    window,
+                    |this, draft, event, window, cx| {
+                        if let gpui_kit::base::input::InputEvent::PressEnter {
+                            shift: false, ..
+                        } = event
+                        {
+                            this.submit_draft(&draft, window, cx);
+                        }
+                    },
+                ));
+            }
+        }
+        let work_path = self
+            .chats
+            .as_ref()
+            .and_then(|chats| chats.history.visible())
+            .and_then(|chat| chat.work_path.clone());
+        let breadcrumb = if self.chats.is_none() {
+            Some("advanced-course  /  coder-cli".to_owned())
+        } else {
+            work_path
+        };
         let (sidebar_width, chat_width) = column_widths(
             window.viewport_size().width.into(),
             window.is_fullscreen() || window.is_maximized(),
@@ -134,8 +279,12 @@ impl Render for Vespera {
                             .ml(px(sidebar_width))
                             .pl(px(20.))
                             .gap(px(12.))
-                            .child(icon("folder-01", 18., MUTED))
-                            .child(muted("advanced-course  /  coder-cli", 14.)),
+                            .children(breadcrumb.map(|path| {
+                                row()
+                                    .gap(px(12.))
+                                    .child(icon("folder-01", 18., MUTED))
+                                    .child(muted(path, 14.).whitespace_nowrap().overflow_hidden())
+                            })),
                     )
                     .child(
                         row()
@@ -150,8 +299,14 @@ impl Render for Vespera {
                     .min_h_0()
                     .w_full()
                     .items_start()
-                    .child(sidebar::sidebar(sidebar_width, &search, cx))
-                    .child(chat::chat(chat_width, &draft))
+                    .child(sidebar::sidebar(
+                        sidebar_width,
+                        &search,
+                        self.chats.as_ref(),
+                        self.inspection.daily_usage(),
+                        cx,
+                    ))
+                    .child(chat::chat(chat_width, &draft, self, cx))
                     .child(self.inspector(cx)),
             )
     }

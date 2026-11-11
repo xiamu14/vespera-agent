@@ -5,12 +5,17 @@ use vespera::{Startup, assets::Assets};
 actions!(vespera, [Quit]);
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    vespera::agent_bridge::AgentBridge::start_bundled();
     application().with_assets(Assets).run(|cx| {
         init(cx);
         Theme::change(ThemeMode::Light, None, cx);
         cx.set_app_identity("dev.vespera.desktop", "Vespera");
         cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-r", vespera::ReloadChats, None),
+        ]);
         let width = cx
             .primary_display()
             .map(|display| (display.visible_bounds().size.width - px(300.)).max(px(1.)))
