@@ -1,4 +1,4 @@
-pub const QUESTION: &str = "给 Vespera 做一份上线检查清单，用 Markdown 展示。";
+pub const QUESTION: &str = "给 Ani Bot 做一份上线检查清单，用 Markdown 展示。";
 pub const ANSWER: &str = r#"# 上线前的最后一公里
 
 **先验证核心流程**，再逐步开放功能。
@@ -39,7 +39,7 @@ pub const USER_MEMORY: &str = r#"## 交流与工作偏好
 > 确认具体结果后，再进入下一步。
 "#;
 
-pub const PROJECT_MEMORY: &str = r#"## Vespera 项目约定
+pub const PROJECT_MEMORY: &str = r#"## Ani Bot 项目约定
 
 桌面端以流畅、清晰的对话体验为核心。
 

@@ -101,21 +101,24 @@ impl Vespera {
     }
 
     fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
-        const RADIUS: f32 = 16.;
-        const PADDING: f32 = 5.;
+        const PADDING: f32 = 3.;
         const BORDER_WIDTH: f32 = 1.;
+        let control_height = INSPECTOR_TAB_HEIGHT - 2. * (PADDING + BORDER_WIDTH);
         let controls = InspectorTab::ALL.map(|tab| {
             let active = tab == self.tab;
             let mut control = row()
                 .id(tab.title())
                 .flex_1()
                 .min_w_0()
-                .h(px(40.))
+                .h(px(control_height))
                 .gap(px(8.))
                 .justify_center()
-                .rounded(px(RADIUS - PADDING - BORDER_WIDTH))
+                .rounded(limited_radius(
+                    CONTROL_RADIUS - PADDING - BORDER_WIDTH,
+                    control_height,
+                ))
                 .text_color(rgb(if active { INK } else { MUTED }))
-                .child(icon(tab.icon(), 18., if active { INK } else { MUTED }))
+                .child(icon(tab.icon(), 14., if active { INK } else { MUTED }))
                 .child(label(tab.title(), 16.))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.tab = tab;
@@ -138,7 +141,7 @@ impl Vespera {
             .flex_shrink_0()
             .p(px(PADDING))
             .gap(px(8.))
-            .rounded(px(RADIUS))
+            .rounded(limited_radius(CONTROL_RADIUS, INSPECTOR_TAB_HEIGHT))
             .border(px(BORDER_WIDTH))
             .border_color(rgb(0xededee))
             .bg(rgb(0xf8f8f8))

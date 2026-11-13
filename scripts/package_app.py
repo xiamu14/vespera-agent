@@ -10,7 +10,7 @@ from package_agent import package_agent, sign
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
-APP = DIST / "Vespera.app"
+APP = DIST / "Ani Bot.app"
 
 
 def run(*args):
@@ -41,7 +41,7 @@ def build_app(app):
     resources.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ROOT / "target" / "release" / "vespera", executable)
     package_agent(contents, signing_identity=signing_identity)
-    iconset = DIST / "Vespera.iconset"
+    iconset = DIST / "Ani Bot.iconset"
     iconset.mkdir(parents=True, exist_ok=True)
     for points in (16, 32, 128, 256, 512):
         for scale in (1, 2):
@@ -49,16 +49,16 @@ def build_app(app):
             output = iconset / f"icon_{points}x{points}{suffix}.png"
             run("sips", "-z", str(points * scale), str(points * scale),
                 str(ROOT / "assets" / "app-icon.png"), "--out", str(output))
-    run("iconutil", "-c", "icns", str(iconset), "-o", str(resources / "Vespera.icns"))
+    run("iconutil", "-c", "icns", str(iconset), "-o", str(resources / "Ani Bot.icns"))
     info = {
-        "CFBundleName": "Vespera",
-        "CFBundleDisplayName": "Vespera",
+        "CFBundleName": "Ani Bot",
+        "CFBundleDisplayName": "Ani Bot",
         "CFBundleIdentifier": "dev.vespera.desktop",
         "CFBundleExecutable": "vespera",
         "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "0.1.0",
         "CFBundleVersion": "1",
-        "CFBundleIconFile": "Vespera.icns",
+        "CFBundleIconFile": "Ani Bot.icns",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "14.0",
     }

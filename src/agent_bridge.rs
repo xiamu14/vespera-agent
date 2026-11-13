@@ -55,7 +55,7 @@ impl AgentBridge {
         if Self::is_bundled() {
             std::thread::spawn(|| {
                 if let Err(error) = Self::bundled() {
-                    eprintln!("Vespera Agent Core: {error}");
+                    eprintln!("Ani Bot Agent Core: {error}");
                 }
             });
         }
@@ -74,7 +74,7 @@ impl AgentBridge {
         let handle = unsafe { dlopen(library.as_ptr(), 2 | 8) }; // RTLD_NOW | RTLD_GLOBAL on macOS.
         if handle.is_null() {
             let error = unsafe { dlerror() };
-            ensure!(!error.is_null(), "Could not load the Vespera Agent Core");
+            ensure!(!error.is_null(), "Could not load the Ani Bot Agent Core");
             return Err(anyhow!(
                 unsafe { CStr::from_ptr(error) }
                     .to_string_lossy()

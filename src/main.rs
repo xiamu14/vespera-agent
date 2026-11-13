@@ -10,7 +10,7 @@ fn main() {
     application().with_assets(Assets).run(|cx| {
         init(cx);
         Theme::change(ThemeMode::Light, None, cx);
-        cx.set_app_identity("dev.vespera.desktop", "Vespera");
+        cx.set_app_identity("dev.vespera.desktop", "Ani Bot");
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
@@ -25,14 +25,14 @@ fn main() {
         options.window_bounds = Some(WindowBounds::Windowed(bounds));
         options.window_min_size = Some(size(px(1280.).min(width), px(800.)));
         options.titlebar = Some(TitlebarOptions {
-            title: Some("Vespera".into()),
+            title: Some("Ani Bot".into()),
             appears_transparent: true,
             traffic_light_position: Some(point(px(20.), px(18.))),
         });
         open_window(options, cx, |window, cx| {
             cx.new(|cx| Startup::new(window, cx))
         })
-        .expect("Cannot open Vespera window");
+        .expect("Cannot open Ani Bot window");
         cx.activate(true);
     });
 }

@@ -1,9 +1,9 @@
-# Vespera Desktop
+# Ani Bot
 
 Rust + GPUI Kit 的 macOS 静态桌面界面，按 `vespera.sketch` 实现。
 「状态 / 产物 / 记忆」在同一个窗口的第三栏切换。
 
-Vespera 的按钮、图标和链接悬停时使用默认箭头光标，不使用手形指针（`cursor_pointer`）。输入框保留文本光标。
+Ani Bot 的按钮、图标和链接悬停时使用默认箭头光标，不使用手形指针（`cursor_pointer`）。输入框保留文本光标。
 
 ## 运行
 
@@ -17,7 +17,7 @@ cargo run
 
 ```sh
 python3 scripts/package_app.py
-open dist/Vespera.app
+open "./dist/Ani Bot.app"
 ```
 
 打包需要同架构的 Rust 工具链、Xcode Command Line Tools、`uv`、uv 管理的 CPython 3.13，以及同级 `coder-cli/` 的源码和锁文件。

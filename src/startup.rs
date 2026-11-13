@@ -35,8 +35,11 @@ impl Startup {
             {
                 let data = NSData::with_bytes(include_bytes!("../assets/startup.wav"));
                 this.sound = NSSound::initWithData(NSSound::alloc(), &data);
-                if !this.sound.as_ref().is_some_and(|sound| sound.play()) {
-                    eprintln!("Vespera could not play the startup sound");
+                if !this.sound.as_ref().is_some_and(|sound| {
+                    sound.setVolume(0.5);
+                    sound.play()
+                }) {
+                    eprintln!("Ani Bot could not play the startup sound");
                 }
             }
             this.started = Some(Instant::now());
@@ -246,7 +249,7 @@ fn splash(elapsed: Duration, phase: f32) -> Div {
                         if let Err(error) =
                             window.paint_image(paint_bounds, image_bounds, radii, image, 0, false)
                         {
-                            eprintln!("Vespera could not paint the startup gradient: {error}");
+                            eprintln!("Ani Bot could not paint the startup gradient: {error}");
                         }
                     }
                     if ripple > px(0.) {

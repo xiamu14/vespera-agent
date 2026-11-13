@@ -4,11 +4,12 @@ pub const BACKGROUND: u32 = 0xfdfdfd;
 pub const INK: u32 = 0x555555;
 pub const MUTED: u32 = 0x66696d;
 pub const PRIMARY: u32 = 0xf6671e;
+pub const PROGRESS_TRACK: u32 = 0xffd6bf;
 pub const PRIMARY_WASH: u32 = 0xfff2eb;
 pub const BORDER: u32 = 0xf5f5f6;
 pub const FIELD: u32 = 0xf6f6f6;
 pub const PANEL_TOP: f32 = 20.;
-pub const INSPECTOR_TAB_HEIGHT: f32 = 52.;
+pub const INSPECTOR_TAB_HEIGHT: f32 = 40.;
 pub const PANEL_RADIUS: f32 = 18.;
 pub const CONTROL_RADIUS: f32 = 10.;
 pub const DETAIL_RADIUS: f32 = 6.;
@@ -152,19 +153,21 @@ pub fn chat_card() -> Div {
         )
 }
 
+pub fn section_marker() -> Div {
+    div()
+        .w(px(2.5))
+        .h(px(14.))
+        .flex_shrink_0()
+        .rounded_full()
+        .bg(rgb(PRIMARY))
+}
+
 pub fn inspector_section(header: Div) -> Div {
     card().p(px(14.)).gap(px(12.)).child(
         row()
             .w_full()
             .gap(px(8.))
-            .child(
-                div()
-                    .w(px(2.5))
-                    .h(px(16.))
-                    .flex_shrink_0()
-                    .rounded_full()
-                    .bg(rgb(PRIMARY)),
-            )
+            .child(section_marker())
             .child(header),
     )
 }
@@ -227,7 +230,7 @@ pub fn usage_ring(usage: Option<(f64, f64)>) -> Div {
     div()
         .relative()
         .size(px(SIZE))
-        .child(icon("usage-track", SIZE, PRIMARY_WASH))
+        .child(icon("usage-track", SIZE, PROGRESS_TRACK))
         .child(
             canvas(
                 |_, _, _| (),

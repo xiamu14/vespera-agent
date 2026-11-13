@@ -1,9 +1,6 @@
 use crate::theme::*;
 use gpui_kit::base::Button;
-use gpui_kit::base::text::{
-    CodeBlock, MarkdownNode, MarkdownParseContext, MarkdownPlugin, TextView, TextViewStyle,
-    markdown_ast,
-};
+use gpui_kit::base::text::{CodeBlock, TextView, TextViewStyle};
 use gpui_kit::*;
 
 const CODE_INSET: f32 = 12.;
@@ -15,59 +12,61 @@ pub fn code_header(block: &CodeBlock, width: Pixels, window: &Window) -> Div {
         .w((width - px(CODE_INSET + 1.) - window.rem_size() / 2.).max(px(0.)))
         .justify_between()
         .child(muted(block.lang().unwrap_or_default(), 14.).font(body_font()))
-        .child(
-            Button::new("copy-code")
-                .accessibility_label("复制代码")
-                .size(px(26.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(DETAIL_RADIUS))
-                .child(icon("copy-01", 16., MUTED))
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
-                }),
-        )
+        .child(CopyCode { code })
 }
 
-struct Semibold;
+#[derive(IntoElement)]
+struct CopyCode {
+    code: SharedString,
+}
 
-impl MarkdownPlugin for Semibold {
-    fn name(&self) -> &str {
-        "semibold"
-    }
-
-    fn parse(
-        &self,
-        node: &markdown_ast::Node,
-        cx: &MarkdownParseContext<'_>,
-    ) -> Option<MarkdownNode> {
-        match node {
-            markdown_ast::Node::Strong(strong)
-                if strong
-                    .children
-                    .iter()
-                    .all(|child| matches!(child, markdown_ast::Node::Text(_))) =>
-            {
-                Some(
-                    MarkdownNode::new(self.name(), ())
-                        .text(node.to_string())
-                        .markdown(cx.node_source(node).unwrap_or_default().to_owned()),
-                )
-            }
-            _ => None,
-        }
-    }
-
-    fn render(&self, node: &MarkdownNode, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // shortcut: static emphasis is atomic; use a text-run renderer for wrapping rich emphasis.
-        div().font(emphasis_font()).child(node.as_text().to_owned())
+impl RenderOnce for CopyCode {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let state = window.use_keyed_state("copy-feedback", cx, |_, _| false);
+        let copied = *state.read(cx);
+        Button::new("copy-code")
+            .accessibility_label(if copied { "已复制" } else { "复制代码" })
+            .disabled(copied)
+            .size(px(26.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(DETAIL_RADIUS))
+            .child(if copied {
+                icon("check", 16., 0x27976c)
+            } else {
+                icon("copy-01", 16., MUTED)
+            })
+            .on_click(move |_, _, cx| {
+                if *state.read(cx) {
+                    return;
+                }
+                cx.write_to_clipboard(ClipboardItem::new_string(self.code.to_string()));
+                state.update(cx, |copied, cx| {
+                    *copied = true;
+                    cx.notify();
+                });
+                let reset = state.downgrade();
+                let timer = cx
+                    .background_executor()
+                    .timer(std::time::Duration::from_millis(500));
+                cx.spawn(async move |cx| {
+                    timer.await;
+                    let _ = reset.update(cx, |copied, cx| {
+                        *copied = false;
+                        cx.notify();
+                    });
+                })
+                .detach();
+            })
     }
 }
 
 pub fn markdown_surface(view: TextView) -> Div {
     div()
         .relative()
+        .w_full()
+        .min_w_0()
         .text_size(px(15.))
         .child(view)
         // GPUI renders links with a hand cursor inside its Markdown element.
@@ -120,8 +119,102 @@ pub fn markdown(id: impl Into<ElementId>, source: impl Into<SharedString>) -> Te
                 .rounded(px(CONTROL_RADIUS))
                 .bg(rgb(FIELD)),
         );
-    TextView::markdown(id, source)
-        .style(style)
-        .plugin(Semibold)
-        .selectable(true)
+    TextView::markdown(id, source).style(style).selectable(true)
+}
+
+#[cfg(all(test, feature = "visual-check"))]
+mod tests {
+    use super::{markdown, markdown_surface};
+    use gpui_kit::{
+        AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render, Styled,
+        TestAppContext, TestDispatcher, Window, component::Root, div, init, px,
+    };
+
+    struct Host;
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(200.)).child(
+                markdown_surface(markdown("wrapping", "总结：**这份配置采用统一格式加少量明确检查的策略，而不是启用大量严格规则。这段加粗文本应该自动换行并完整显示。**"))
+                    .id("paragraph")
+                    .debug_selector(|| "paragraph".into()),
+            )
+        }
+    }
+
+    #[test]
+    fn long_strong_text_wraps_within_chat_width() {
+        let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
+        cx.update(|cx| init(cx));
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let host = cx.new(|_| Host);
+            Root::new(host, window, cx)
+        });
+        for _ in 0..4 {
+            window.run_until_parked();
+            window.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
+        let bounds = window.debug_bounds("paragraph").unwrap();
+        assert_eq!(bounds.size.width, px(200.));
+        assert!(
+            bounds.size.height > px(60.),
+            "long emphasis must occupy multiple lines: {bounds:?}"
+        );
+    }
+
+    struct CopyHost;
+    impl Render for CopyHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().child(super::CopyCode {
+                code: "copy me".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn copy_feedback_disables_for_half_a_second_then_allows_reuse() {
+        use gpui_kit::{Modifiers, VisualTestContext, base::test_support::find};
+        use std::time::Duration;
+        let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
+        cx.update(|cx| init(cx));
+        let executor = cx.background_executor.clone();
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let host = cx.new(|_| CopyHost);
+            Root::new(host, window, cx)
+        });
+        fn draw(window: &mut VisualTestContext) {
+            window.run_until_parked();
+            window.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+        }
+        fn copied(window: &mut VisualTestContext) -> bool {
+            window.update(|window, _| {
+                find(window, &[], &"copy-code".into()).unwrap().label() == Some("已复制")
+            })
+        }
+        draw(window);
+        let center = window.update(|window, _| {
+            find(window, &[], &"copy-code".into())
+                .unwrap()
+                .bounds()
+                .center()
+        });
+        assert!(!copied(window));
+        window.simulate_click(center, Modifiers::default());
+        draw(window);
+        assert!(copied(window));
+        executor.advance_clock(Duration::from_millis(499));
+        draw(window);
+        assert!(copied(window));
+        executor.advance_clock(Duration::from_millis(1));
+        draw(window);
+        assert!(!copied(window));
+        window.simulate_click(center, Modifiers::default());
+        draw(window);
+        assert!(copied(window));
+    }
 }

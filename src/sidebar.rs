@@ -10,22 +10,26 @@ use gpui_kit::base::input::InputState;
 use gpui_kit::*;
 
 const SEARCH_GAP: f32 = 16.;
-const HEADER_HEIGHT: f32 = INSPECTOR_TAB_HEIGHT - SEARCH_GAP;
+const HEADER_HEIGHT: f32 = 36.;
 
-fn session(title: impl Into<SharedString>, time: impl Into<SharedString>, active: bool) -> Div {
+fn session(
+    id: SharedString,
+    title: impl Into<SharedString>,
+    time: impl Into<SharedString>,
+    active: bool,
+) -> Div {
     const HEIGHT: f32 = 35.;
     let content = row()
         .w_full()
-        .h(px(HEIGHT))
+        .h(px(if active { HEIGHT } else { 14. * 1.3 }))
         .px(px(10.))
         .gap(px(6.))
         .justify_between()
-        .child(
-            label(title, 14.)
-                .min_w_0()
-                .whitespace_nowrap()
-                .overflow_hidden(),
-        )
+        .child(crate::sidebar_title::SidebarTitle {
+            id,
+            text: title.into(),
+            active,
+        })
         .child(
             label(time, 12.)
                 .text_color(rgb(0x999999))
@@ -135,7 +139,7 @@ pub fn sidebar(
 }
 
 fn preview_groups(query: &str) -> Div {
-    column().gap(px(14.)).children(
+    column().gap(px(10.)).children(
         [
             (
                 "coder-cli",
@@ -146,7 +150,7 @@ fn preview_groups(query: &str) -> Div {
                 ][..],
             ),
             ("weather-mcp", true, &[("添加天气 MCP", "昨天", false)][..]),
-            ("vespera", true, &[("设计桌面布局", "今天", false)][..]),
+            ("Ani Bot", true, &[("设计桌面布局", "今天", false)][..]),
             ("其他", false, &[("审核工具权限", "11月4日", false)][..]),
         ]
         .into_iter()
@@ -156,13 +160,19 @@ fn preview_groups(query: &str) -> Div {
                 .filter(|(title, _, _)| {
                     name.contains(query) || title.to_lowercase().contains(query)
                 })
-                .map(|&(title, time, active)| session(title, time, active))
+                .map(|&(title, time, active)| {
+                    session(
+                        format!("preview:{name}:{title}").into(),
+                        title,
+                        time,
+                        active,
+                    )
+                })
                 .collect();
             (!items.is_empty()).then_some(ProjectGroup {
                 id: name.into(),
                 name: name.into(),
                 folder,
-                has_active_chat: sessions.iter().any(|&(_, _, active)| active),
                 items,
             })
         }),
@@ -174,7 +184,7 @@ pub fn matches_query(row: &Summary, query: &str) -> bool {
 }
 
 fn live_groups(chats: &Chats, query: &str, cx: &Context<Vespera>) -> Div {
-    let mut groups: Vec<(&Summary, Vec<Div>, bool)> = Vec::new();
+    let mut groups: Vec<(&Summary, Vec<Div>)> = Vec::new();
     for item in chats.rows.iter().filter(|item| matches_query(item, query)) {
         let active = chats.selected.as_deref() == Some(&item.conversation_id);
         let id = item.conversation_id.clone();
@@ -190,23 +200,23 @@ fn live_groups(chats: &Chats, query: &str, cx: &Context<Vespera>) -> Div {
             div()
                 .id(SharedString::from(item.conversation_id.clone()))
                 .child(session(
+                    item.conversation_id.clone().into(),
                     item.title().into_owned(),
                     activity(item.updated_at.as_deref()),
                     active,
                 ))
                 .on_click(open),
         );
-        if let Some((_, items, has_active)) = groups
+        if let Some((_, items)) = groups
             .iter_mut()
-            .find(|(group, _, _)| group.work_path == item.work_path)
+            .find(|(group, _)| group.work_path == item.work_path)
         {
             items.push(row);
-            *has_active |= active;
         } else {
-            groups.push((item, vec![row], active));
+            groups.push((item, vec![row]));
         }
     }
-    let mut content = column().gap(px(14.));
+    let mut content = column().gap(px(10.));
     if chats.list.needs_reload() {
         let message = if matches!(chats.list, ListPhase::Reconciling(_)) {
             "新建结果未确认"
@@ -219,17 +229,12 @@ fn live_groups(chats: &Chats, query: &str, cx: &Context<Vespera>) -> Div {
             cx.listener(|this, _, _, cx| this.reload_list(cx)),
         ));
     }
-    content.children(
-        groups
-            .into_iter()
-            .map(|(group, items, has_active_chat)| ProjectGroup {
-                id: format!("project:{}", group.work_path.as_deref().unwrap_or_default()).into(),
-                name: group.project().to_owned().into(),
-                folder: group.work_path.is_some(),
-                has_active_chat,
-                items,
-            }),
-    )
+    content.children(groups.into_iter().map(|(group, items)| ProjectGroup {
+        id: format!("project:{}", group.work_path.as_deref().unwrap_or_default()).into(),
+        name: group.project().to_owned().into(),
+        folder: group.work_path.is_some(),
+        items,
+    }))
 }
 
 pub fn reload_row(

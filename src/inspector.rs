@@ -18,6 +18,7 @@ pub struct Inspection {
     pub model: Option<String>,
     pub context_used: Option<f64>,
     pub today_cost: Option<f64>,
+    pub total_cost: Option<f64>,
     pub daily_budget_usd: f64,
     pub artifacts: Vec<Artifact>,
     pub user_memory: String,

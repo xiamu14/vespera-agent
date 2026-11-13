@@ -51,7 +51,8 @@ impl RenderOnce for QuestionCard {
             },
         );
         let mut content = chat_card()
-            .p(px(8.))
+            .px(px(15.))
+            .py(px(11.))
             .gap(px(8.))
             .child(
                 row()
@@ -86,19 +87,7 @@ impl RenderOnce for QuestionCard {
                     .rounded(px(DETAIL_RADIUS))
                     .bg(rgb(FIELD))
                     .child(control(question.multi_select, selected))
-                    .child(
-                        column()
-                            .flex_1()
-                            .min_w_0()
-                            .child(label(option.label.clone(), 14.))
-                            .children(
-                                option
-                                    .description
-                                    .clone()
-                                    .filter(|text| !text.is_empty())
-                                    .map(|text| muted(text, 12.)),
-                            ),
-                    )
+                    .child(label(option.label.clone(), 14.).flex_1().min_w_0())
                     .on_click(move |_, _, cx| {
                         let _ = app.update(cx, |app, cx| {
                             app.choose_answer(id.clone(), token, choice.clone(), cx)
@@ -218,9 +207,12 @@ mod tests {
                     )
                     .is_some()
                 );
-                assert!(
+                let option =
                     gpui_kit::base::test_support::find(window, &[], &"question-0-0".into())
-                        .is_some()
+                        .unwrap();
+                assert!(
+                    option.bounds().size.height <= gpui_kit::px(40.),
+                    "options show only a title"
                 );
                 assert_eq!(
                     gpui_kit::base::test_support::find(window, &[], &"confirm-question".into())

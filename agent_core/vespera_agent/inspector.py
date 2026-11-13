@@ -91,12 +91,12 @@ def context_used(response, run, fallback_limit=None):
     return tokens / limit if tokens else None
 
 
-async def today_cost(store, runs, date):
+async def usage_cost(store, runs, date=None):
     total = 0
     priced = False
     active_today = False
     for run in runs:
-        if run.started_at.astimezone().date() < date:
+        if date is not None and run.started_at.astimezone().date() < date:
             continue
         active_today = True
         snapshot = await store.latest_snapshot(run_id=run.run_id, include_interrupted=True)
@@ -105,7 +105,7 @@ async def today_cost(store, runs, date):
         for response in snapshot.messages:
             if not isinstance(response, ModelResponse) or response.run_id != run.run_id:
                 continue
-            if response.timestamp.astimezone().date() != date:
+            if date is not None and response.timestamp.astimezone().date() != date:
                 continue
             if not response.model_name:
                 return None
@@ -170,7 +170,8 @@ async def inspection(core, conversation_id):
         "directory": tree, "directory_truncated": truncated,
         "model": latest.model_name if latest and latest.model_name else model,
         "context_used": context_used(latest, run, limit if latest is None or latest.model_name == model else None),
-        "today_cost": await today_cost(store, runs, datetime.now().astimezone().date()),
+        "today_cost": await usage_cost(store, runs, datetime.now().astimezone().date()),
+        "total_cost": await usage_cost(store, runs),
         "daily_budget_usd": daily_budget_usd(),
         "artifacts": artifacts(artifact_history),
         "user_memory": memory if work_path is None else "",

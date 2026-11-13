@@ -1,4 +1,4 @@
-"""Client-independent Vespera configuration."""
+"""Client-independent Ani Bot configuration."""
 
 import math
 import os

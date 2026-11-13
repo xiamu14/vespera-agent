@@ -1,4 +1,4 @@
-use crate::{Vespera, live_state::Question, theme::*};
+use crate::{Vespera, live_state::Question};
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -31,24 +31,6 @@ pub fn user_text(part: &Value) -> Option<String> {
             .join("\n")
     };
     (!text.trim().is_empty()).then_some(text)
-}
-
-pub fn choice(question: &Value, output: &Value, status: &'static str) -> Div {
-    let answer = output.get(text(question, "header"));
-    let summary = match answer {
-        Some(Value::Array(values)) => values
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join("、"),
-        Some(Value::String(value)) => value.clone(),
-        _ => status.to_owned(),
-    };
-    chat_card()
-        .p(px(8.))
-        .gap(px(8.))
-        .child(label(text(question, "question").to_owned(), 14.).font(emphasis_font()))
-        .child(muted(summary, 14.))
 }
 
 pub fn question(

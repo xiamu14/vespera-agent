@@ -1,6 +1,6 @@
 use crate::masked_scroll::MaskedScroll;
 use crate::theme::*;
-use gpui_kit::*;
+use gpui_kit::{base::Progress, *};
 
 fn dot_alpha(index: usize, count: usize) -> f32 {
     if count <= 1 {
@@ -64,22 +64,56 @@ fn directory() -> Div {
         .child(column().relative().children(entries).child(lines))
 }
 
-fn context() -> Div {
+fn context_section(model: impl Into<SharedString>, used: Option<f64>, cost: Option<f64>) -> Div {
+    let fraction = used
+        .filter(|value| value.is_finite())
+        .map(|value| value.clamp(0., 1.));
     inspector_section(label("运行上下文", 16.)).child(
-        column().gap(px(8.)).pl(px(9.)).children(
-            [
-                ("模型", "GPT-6.2 Sol 中"),
-                ("上下文", "24%"),
-                ("今日消耗", "$12"),
-            ]
-            .into_iter()
-            .map(|(title, value)| {
+        column()
+            .gap(px(8.))
+            .pl(px(9.))
+            .child(
                 row()
-                    .child(muted(title, 14.).w(px(72.)).flex_shrink_0())
-                    .child(muted(value, 14.))
-            }),
-        ),
+                    .child(muted("模型", 14.).w(px(100.)).flex_shrink_0())
+                    .child(muted(model, 14.).min_w_0().truncate()),
+            )
+            .child(
+                row()
+                    .child(muted("上下文", 14.).w(px(100.)).flex_shrink_0())
+                    .child(
+                        Progress::new("context-progress")
+                            .accessibility_label("上下文使用量")
+                            .value((fraction.unwrap_or(0.) * 100.) as f32)
+                            .indeterminate(fraction.is_none())
+                            .w(px(100.))
+                            .h(px(4.))
+                            .flex_shrink_0()
+                            .rounded_full()
+                            .overflow_hidden()
+                            .bg(rgb(PROGRESS_TRACK))
+                            .child(
+                                div()
+                                    .h_full()
+                                    .w(relative(fraction.unwrap_or(0.) as f32))
+                                    .rounded_full()
+                                    .bg(rgb(PRIMARY)),
+                            ),
+                    ),
+            )
+            .child(
+                row()
+                    .child(muted("费用（总计）", 14.).w(px(100.)).flex_shrink_0())
+                    .child(muted(
+                        cost.map(|cost| format!("$ {cost:.2}"))
+                            .unwrap_or_else(|| "—".into()),
+                        14.,
+                    )),
+            ),
     )
+}
+
+fn context() -> Div {
+    context_section("GPT-6.1 Sol", Some(0.24), Some(12.))
 }
 
 pub fn status(history: &[(&'static str, &'static str)]) -> Div {
@@ -100,9 +134,118 @@ pub fn status(history: &[(&'static str, &'static str)]) -> Div {
         .child(context())
 }
 
+fn model_display_name(id: &str) -> &str {
+    match id
+        .rsplit('/')
+        .next()
+        .unwrap_or(id)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "gpt-6.1-sol" => "GPT-6.1 Sol",
+        "gpt-6-astra" => "GPT-6 Astra",
+        "gpt-6.1-terra" => "GPT-6.1 Terra",
+        "gpt-6-sol" => "GPT-6 Sol",
+        "gpt-6-luna" => "GPT-6 Luna",
+        "gpt-5.6-sol" => "GPT-5.6 Sol",
+        "gpt-5.6-terra" => "GPT-5.6 Terra",
+        "gpt-5.6-luna" => "GPT-5.6 Luna",
+        "claude-opus-5.5" | "claude-opus-5-5" => "Claude Opus 5.5",
+        "claude-opus-5" => "Claude Opus 5",
+        "claude-opus-4.8" | "claude-opus-4-8" => "Claude Opus 4.8",
+        "claude-opus-4.7" | "claude-opus-4-7" => "Claude Opus 4.7",
+        "claude-opus-4.6" | "claude-opus-4-6" => "Claude Opus 4.6",
+        "claude-opus-4.5" | "claude-opus-4-5" | "claude-opus-4-5-20251101" => "Claude Opus 4.5",
+        "claude-sonnet-5.5" | "claude-sonnet-5-5" => "Claude Sonnet 5.5",
+        "claude-sonnet-5" => "Claude Sonnet 5",
+        "claude-sonnet-4.6" | "claude-sonnet-4-6" => "Claude Sonnet 4.6",
+        "claude-sonnet-4.5" | "claude-sonnet-4-5" | "claude-sonnet-4-5-20250929" => {
+            "Claude Sonnet 4.5"
+        }
+        "claude-haiku-5.5" | "claude-haiku-5-5" => "Claude Haiku 5.5",
+        "claude-haiku-4.5" | "claude-haiku-4-5" | "claude-haiku-4-5-20251001" => "Claude Haiku 4.5",
+        "claude-fable-5.2" | "claude-fable-5-2" => "Claude Fable 5.2",
+        "claude-fable-5.1" | "claude-fable-5-1" => "Claude Fable 5.1",
+        "claude-fable-5" => "Claude Fable 5",
+        "claude-mythos-5.2" | "claude-mythos-5-2" => "Claude Mythos 5.2",
+        "claude-mythos-5.1" | "claude-mythos-5-1" => "Claude Mythos 5.1",
+        "claude-mythos-5" => "Claude Mythos 5",
+        "minimax-m3.1-flash" => "MiniMax M3.1 Flash",
+        "minimax-m3" => "MiniMax M3",
+        "minimax-m2.7" => "MiniMax M2.7",
+        "minimax-m2.7-highspeed" => "MiniMax M2.7 Highspeed",
+        "minimax-m2.5" => "MiniMax M2.5",
+        "minimax-m2.5-lightning" => "MiniMax M2.5 Lightning",
+        "minimax-m2.1" => "MiniMax M2.1",
+        "minimax-m2" => "MiniMax M2",
+        "minimax-m2-her" => "MiniMax M2 Her",
+        "mimo-v2.6-pro" => "MiMo-V2.6-Pro",
+        "mimo-v2.6-flash" => "MiMo-V2.6-Flash",
+        "mimo-v2.5" => "MiMo-V2.5",
+        "mimo-v2.5-pro" => "MiMo-V2.5-Pro",
+        "mimo-v2.5-pro-ultraspeed" => "MiMo-V2.5-Pro-UltraSpeed",
+        "mimo-v2-pro" => "MiMo-V2-Pro",
+        "mimo-v2-flash" => "MiMo-V2-Flash",
+        "mimo-v2-omni" => "MiMo-V2-Omni",
+        "glm-5.3" => "GLM-5.3",
+        "glm-5.3-flash" => "GLM-5.3-Flash",
+        "glm-5.3-flash-event" => "GLM-5.3-Flash Event",
+        "glm-5.3-flashx" => "GLM-5.3-FlashX",
+        "glm-5.2" => "GLM-5.2",
+        "glm-5.1" => "GLM-5.1",
+        "glm-5" => "GLM-5",
+        "glm-4.7" => "GLM-4.7",
+        "glm-4.7-flash" => "GLM-4.7-Flash",
+        "gemini-3.5-flash" => "Gemini 3.5 Flash",
+        "gemini-3.1-pro-preview" => "Gemini 3.1 Pro Preview",
+        "deepseek-v4-pro" => "DeepSeek-V4-Pro",
+        "deepseek-v4-flash" => "DeepSeek-V4-Flash",
+        "deepseek-v4.1-flash" => "DeepSeek-V4.1-Flash",
+        "kimi-k2.6" => "Kimi K2.6",
+        "qwen3.7-max" => "Qwen3.7-Max",
+        _ => id,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::dot_alpha;
+    use super::{dot_alpha, model_display_name};
+
+    #[test]
+    fn model_ids_use_public_names_and_preserve_unknown_models() {
+        for (id, expected) in [
+            ("gpt-6.1-sol", "GPT-6.1 Sol"),
+            ("gpt-6-astra", "GPT-6 Astra"),
+            ("gpt-6.1-terra", "GPT-6.1 Terra"),
+            ("gpt-6-sol", "GPT-6 Sol"),
+            ("gpt-6-luna", "GPT-6 Luna"),
+            ("gpt-5.6-sol", "GPT-5.6 Sol"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna"),
+        ] {
+            assert_eq!(model_display_name(id), expected);
+            assert_eq!(model_display_name(&format!("openai/{id}")), expected);
+        }
+        for (id, expected) in [
+            ("anthropic/claude-opus-5.5", "Claude Opus 5.5"),
+            ("claude-opus-5-5", "Claude Opus 5.5"),
+            ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+            ("minimax/minimax-m3.1-flash", "MiniMax M3.1 Flash"),
+            ("MiniMax-M2.7-highspeed", "MiniMax M2.7 Highspeed"),
+            ("xiaomi/mimo-v2.6-pro", "MiMo-V2.6-Pro"),
+            ("mimo-v2.5-pro", "MiMo-V2.5-Pro"),
+            ("GLM-5.3-Flash-Event", "GLM-5.3-Flash Event"),
+            ("z-ai/glm-5.3-flash", "GLM-5.3-Flash"),
+            ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+            ("deepseek/deepseek-v4-pro", "DeepSeek-V4-Pro"),
+            ("moonshotai/kimi-k2.6", "Kimi K2.6"),
+            ("qwen/qwen3.7-max", "Qwen3.7-Max"),
+        ] {
+            assert_eq!(model_display_name(id), expected);
+        }
+        assert_eq!(model_display_name("custom/model"), "custom/model");
+        assert_eq!(model_display_name("—"), "—");
+    }
 
     #[test]
     fn timeline_dots_fade_from_latest_to_oldest() {
@@ -127,12 +270,13 @@ pub fn live(
     let model = turn
         .and_then(|turn| turn.model.as_deref())
         .or_else(|| data.and_then(|data| data.model.as_deref()))
+        .map(model_display_name)
         .unwrap_or("—")
         .to_owned();
     let used = turn
         .and_then(|turn| turn.context_used)
         .or_else(|| data.and_then(|data| data.context_used));
-    let cost = data.and_then(|data| data.today_cost);
+    let cost = data.and_then(|data| data.total_cost);
     let recent = crate::chat_timeline::render(app, cx);
     let files = inspector_section(label("文件目录", 16.))
         .children(
@@ -152,34 +296,7 @@ pub fn live(
             data.is_some_and(|data| data.directory_truncated)
                 .then(|| muted("目录内容已截断", 12.)),
         );
-    let context = inspector_section(label("运行上下文", 16.)).child(
-        column().gap(px(8.)).pl(px(9.)).children(
-            [
-                ("模型", model),
-                (
-                    "上下文",
-                    used.map(|used| format!("{:.0}%", used * 100.))
-                        .unwrap_or_else(|| "—".into()),
-                ),
-                (
-                    "今日消耗",
-                    cost.map(|cost| {
-                        format!("${cost:.2}")
-                            .trim_end_matches('0')
-                            .trim_end_matches('.')
-                            .to_owned()
-                    })
-                    .unwrap_or_else(|| "—".into()),
-                ),
-            ]
-            .into_iter()
-            .map(|(title, value)| {
-                row()
-                    .child(muted(title, 14.).w(px(72.)).flex_shrink_0())
-                    .child(muted(value, 14.).min_w_0().truncate())
-            }),
-        ),
-    );
+    let context = context_section(model, used, cost);
     column()
         .w_full()
         .flex_1()
@@ -191,4 +308,39 @@ pub fn live(
             column().w_full().gap(px(20.)).child(recent).child(files),
         ))
         .child(context)
+}
+
+#[cfg(all(test, feature = "visual-check"))]
+mod layout_tests {
+    use super::context_section;
+    use gpui_kit::{
+        AppContext, Context, IntoElement, ParentElement, Render, Styled, TestAppContext,
+        TestDispatcher, Window, base::test_support::find, component::Root, div, init, px,
+    };
+
+    struct Host;
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(340.))
+                .child(context_section("GPT-6.1 Sol", Some(0.05), Some(0.22)))
+        }
+    }
+
+    #[test]
+    fn context_progress_is_exactly_one_hundred_pixels_wide() {
+        let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
+        cx.update(|cx| init(cx));
+        let (_, window) = cx.add_window_view(|window, cx| {
+            let host = cx.new(|_| Host);
+            Root::new(host, window, cx)
+        });
+        window.run_until_parked();
+        window.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            let bar = find(window, &[], &"context-progress".into()).unwrap();
+            assert_eq!(bar.bounds().size.width, px(100.));
+            assert_eq!(bar.bounds().size.height, px(4.));
+        });
+    }
 }

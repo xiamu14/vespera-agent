@@ -1,6 +1,9 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 #[derive(Default)]
 pub struct LiveChat {
@@ -18,6 +21,8 @@ pub struct Turn {
     pub model: Option<String>,
     pub context_used: Option<f64>,
     pub llm_started: Option<Instant>,
+    paused_at: Option<Instant>,
+    paused: Duration,
     response: Option<(u64, usize)>,
     pub(crate) run_id: Option<String>,
 }
@@ -39,7 +44,6 @@ pub struct Question {
 #[derive(Clone, Deserialize)]
 pub struct OptionLabel {
     pub label: String,
-    pub description: Option<String>,
 }
 
 impl Turn {
@@ -64,16 +68,41 @@ impl Turn {
             model: None,
             context_used: None,
             llm_started: None,
+            paused_at: None,
+            paused: Duration::ZERO,
             response: None,
             run_id: None,
         }
     }
 
+    pub(crate) fn elapsed_seconds(&self) -> u64 {
+        self.llm_started.map_or(0, |start| {
+            self.paused_at
+                .unwrap_or_else(Instant::now)
+                .saturating_duration_since(start)
+                .saturating_sub(self.paused)
+                .as_secs()
+        })
+    }
+
+    pub(crate) fn timer_running(&self) -> bool {
+        self.running && self.paused_at.is_none()
+    }
+
     pub(crate) fn event(&mut self, event: Value) {
+        if event["type"] == "user_wait_finished" {
+            if let Some(start) = self.paused_at.take() {
+                self.paused += start.elapsed();
+            }
+            return;
+        }
         if event["type"] == "question" {
             if let Ok(mut question) = serde_json::from_value::<Question>(event["question"].clone())
                 && let Some(id) = event["question_id"].as_u64()
             {
+                if self.llm_started.is_some() {
+                    self.paused_at.get_or_insert_with(Instant::now);
+                }
                 question.id = id;
                 question.details = event["details"].as_str().unwrap_or_default().to_owned();
                 self.question = Some(question);
@@ -174,6 +203,22 @@ pub fn filename(path: &str) -> &str {
 mod tests {
     use super::Turn;
     use serde_json::json;
+
+    #[test]
+    fn user_wait_freezes_then_resumes_elapsed_time() {
+        use std::time::{Duration, Instant};
+        let now = Instant::now();
+        let mut turn = Turn::new("hello", &[]);
+        turn.llm_started = Some(now - Duration::from_secs(10));
+        turn.paused_at = Some(now - Duration::from_secs(5));
+        assert_eq!(turn.elapsed_seconds(), 5);
+        assert!(!turn.timer_running());
+        turn.event(json!({"type":"user_wait_finished"}));
+        assert_eq!(turn.elapsed_seconds(), 5);
+        assert!(turn.timer_running());
+        turn.event(json!({"type":"user_wait_finished"}));
+        assert_eq!(turn.elapsed_seconds(), 5);
+    }
 
     #[test]
     fn stream_keeps_model_text_tools_and_question() {

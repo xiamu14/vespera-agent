@@ -26,6 +26,24 @@ from tools.review import review_diff
 from tools.web_tools import web_search
 
 
+COMMIT_WORKFLOW = """
+<commit_workflow>
+For commit messages and commit-only tasks, use this focused workflow instead of broad repository investigation.
+Reuse the conversation's edits, tool results and completed verification as evidence already inspected.
+A file mentioned only as part of the commit scope does not require reopening it when that evidence is sufficient.
+Read git status --short once to identify staged, unstaged and untracked changes in the requested repository.
+Status gives paths, not change contents: inspect the scoped git diff and git diff --cached together when needed;
+skip diffs already available in context. Read untracked files or missing/truncated diff ranges only as needed.
+Do not reopen full files, README, manifests, ignore files or tests merely to write a commit message.
+Do not repeat successful status, diff or read_file calls while their relevant state is unchanged.
+After staging, committing, another edit, truncated output or a failure, recheck only what that change invalidates.
+For a commit-only request, do not start another review, test run or delegation unless requested or new evidence requires it.
+Draft a concise message from the actual changes. When asked only for a message, return it without staging or committing.
+When asked to commit, stage only the intended paths, commit, then verify the result once; never discard unrelated changes.
+</commit_workflow>
+"""
+
+
 @dataclass(frozen=True)
 class RunDeps:
     project: ProjectContext
@@ -57,7 +75,7 @@ class Runtime:
             self.role_model("super"), name="super", model_settings=self.settings("super"),
             deps_type=RunDeps,
             instructions=(resources / "prompts" / "system.md").read_text(encoding="utf-8")
-            + ROLES["super"].instructions,
+            + ROLES["super"].instructions + COMMIT_WORKFLOW,
             capabilities=[
                 Coder(unrestricted_filesystem=True, repo_context=False, sub_agents=False),
                 WebFetch(native=False, local=True), output_hooks, self.skills,
@@ -107,7 +125,7 @@ class Runtime:
         else:
             capabilities.append(Coder(unrestricted_filesystem=True, repo_context=False, sub_agents=False))
         child = Agent(self.role_model("super"), name=name, description=role.description,
-                      instructions=role.instructions, capabilities=capabilities,
+                      instructions=role.instructions + COMMIT_WORKFLOW, capabilities=capabilities,
                       model_settings=self.settings(name), tools=[review_diff] if role.read_only else [])
         return SubAgent(child, name=name, description=role.description, read_only=role.read_only,
                         usage_limits=UsageLimits(request_limit=50))

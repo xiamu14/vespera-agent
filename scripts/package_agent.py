@@ -63,7 +63,7 @@ def sign(path, identity):
 def package_agent(contents, *, signing_identity="-"):
     uv = shutil.which("uv")
     if uv is None:
-        raise SystemExit("Install uv to package Vespera's Python runtime.")
+        raise SystemExit("Install uv to package Ani Bot's Python runtime.")
     with TemporaryDirectory(prefix="vespera-package-") as temp:
         staging = Path(temp)
         python = subprocess.check_output(
@@ -74,6 +74,8 @@ def package_agent(contents, *, signing_identity="-"):
         run(uv, "export", "--project", CODER, "--locked", "--no-dev", "--no-emit-workspace",
             "--output-file", requirements, "--quiet")
         run(uv, "pip", "sync", "--python", python, "--target", target, "--link-mode", "copy", requirements)
+
+    run(str(target / "bin" / "rg"), "--version")
 
     for directory in ("Frameworks", "Resources/python"):
         for path in (contents / directory).rglob("*"):

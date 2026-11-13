@@ -44,6 +44,11 @@ class Sessions:
             db.execute("""CREATE TABLE IF NOT EXISTS vespera_sessions (
                 conversation_id TEXT PRIMARY KEY, work_path TEXT, device INTEGER, inode INTEGER, created_at TEXT
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS vespera_user_waits (
+                run_id TEXT NOT NULL, question_id INTEGER NOT NULL,
+                started_at TEXT NOT NULL, finished_at TEXT,
+                PRIMARY KEY (run_id, question_id)
+            )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(vespera_sessions)")}
             if "created_at" not in columns:
                 db.execute("ALTER TABLE vespera_sessions ADD COLUMN created_at TEXT")
@@ -53,6 +58,21 @@ class Sessions:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS vespera_memory_conversation
                 ON vespera_project_memory(conversation_id)""")
+
+    def user_wait(self, run_id, question_id, *, finished=False):
+        with closing(sqlite3.connect(self.database)) as db, db:
+            now = datetime.now(UTC).isoformat()
+            if finished:
+                db.execute("UPDATE vespera_user_waits SET finished_at=? WHERE run_id=? AND question_id=?",
+                           (now, run_id, question_id))
+            else:
+                db.execute("INSERT INTO vespera_user_waits VALUES (?, ?, ?, NULL)",
+                           (run_id, question_id, now))
+
+    def user_waits(self, run_id):
+        with closing(sqlite3.connect(self.database)) as db:
+            return db.execute("SELECT started_at, finished_at FROM vespera_user_waits WHERE run_id=?",
+                              (run_id,)).fetchall()
 
     def create(self, binding=None):
         conversation_id = Conversation().conversation_id

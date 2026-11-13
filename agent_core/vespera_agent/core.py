@@ -23,6 +23,7 @@ from .attachments import load_attachments
 from .inspector import inspection, user_messages
 from .runtime import RunDeps, Runtime
 from .sessions import Binding, Sessions
+from .timing import active_seconds
 
 
 STREAM_EVENT = TypeAdapter(AgentStreamEvent)
@@ -141,7 +142,7 @@ class AgentCore:
             events = await store.list_events(run_id=run.run_id)
             start = next((event.timestamp for event in events if event.kind == "model_request_started"), run.started_at)
             end = events[-1].timestamp if events else start
-            timings[run.run_id] = max(0, int((end - start).total_seconds()))
+            timings[run.run_id] = active_seconds(start, end, await asyncio.to_thread(self.sessions.user_waits, run.run_id))
         return {
             "conversation_id": conversation_id,
             "work_path": str(binding.path) if binding else None,
@@ -283,9 +284,18 @@ class AgentCore:
                 item, future = pending
                 question_id = next(self._question_ids)
                 self._questions[conversation_id] = (question_id, item, future)
+                run_id = interaction.context.run_id if interaction.context else None
+                if run_id is not None:
+                    await asyncio.to_thread(self.sessions.user_wait, run_id, question_id)
                 emit({"type": "question", "text": text, "question_id": question_id,
                       "question": item.model_dump(mode="json"),
                       "details": text.partition(f"\n\n**{item.header}**")[0]})
+                try:
+                    await asyncio.shield(future)
+                finally:
+                    if run_id is not None:
+                        await asyncio.to_thread(self.sessions.user_wait, run_id, question_id, finished=True)
+                    emit({"type": "user_wait_finished", "question_id": question_id})
 
             async def observe(event):
                 emit({"type": "delegation", "event": TASK_EVENT.dump_python(

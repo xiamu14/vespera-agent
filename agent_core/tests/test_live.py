@@ -137,4 +137,5 @@ class LiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(detail["model"], model.model_name)
             self.assertEqual(detail["context_used"], 0.0)
             self.assertEqual(detail["today_cost"], 0.0)
+            self.assertEqual(detail["total_cost"], 0.0)
             self.assertIsNone(core._runtime)

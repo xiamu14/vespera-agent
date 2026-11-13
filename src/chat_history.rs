@@ -50,6 +50,14 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
     let mut section = 0;
     for (index, part) in parts.iter().enumerate() {
         let part = *part;
+        if answered_question(
+            part,
+            results
+                .get(history_cards::text(part, "tool_call_id"))
+                .copied(),
+        ) {
+            continue;
+        }
         let key = format!("history-{}-{index}", chat.conversation_id);
         let saved_seconds = chat
             .history
@@ -74,15 +82,13 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
                 }
                 if !live || turn.is_some_and(|turn| turn.llm_started.is_some()) {
                     let seconds = if live {
-                        turn.and_then(|turn| turn.llm_started)
-                            .map(|start| start.elapsed().as_secs())
-                            .unwrap_or_default()
+                        turn.map(Turn::elapsed_seconds).unwrap_or_default()
                     } else {
                         saved_seconds
                     };
                     content = content.child(crate::response_time::ResponseTime {
                         seconds,
-                        running: live && turn.is_some_and(|turn| turn.running),
+                        running: live && turn.is_some_and(Turn::timer_running),
                     });
                     header_shown.insert(section);
                 }
@@ -95,11 +101,8 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
                 }
                 if header_shown.insert(section) {
                     content = content.child(crate::response_time::ResponseTime {
-                        seconds: turn
-                            .and_then(|turn| turn.llm_started)
-                            .map(|start| start.elapsed().as_secs())
-                            .unwrap_or_default(),
-                        running: live && turn.is_some_and(|turn| turn.running),
+                        seconds: turn.map(Turn::elapsed_seconds).unwrap_or_default(),
+                        running: live && turn.is_some_and(Turn::timer_running),
                     });
                 }
                 if history_cards::text(part, "part_kind") == "text" {
@@ -123,6 +126,14 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
                                 "tool-call" | "builtin-tool-call"
                             )
                         })
+                        .filter(|call| {
+                            !answered_question(
+                                call,
+                                results
+                                    .get(history_cards::text(call, "tool_call_id"))
+                                    .copied(),
+                            )
+                        })
                         .map(|call| {
                             let id = history_cards::text(call, "tool_call_id");
                             crate::tool_section::ToolEntry {
@@ -143,28 +154,6 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
             }
             _ => {}
         }
-        if history_cards::text(part, "tool_name") == "ask_user_question"
-            && history_cards::text(part, "part_kind") == "tool-call"
-            && let Some(result) = results.get(history_cards::text(part, "tool_call_id"))
-        {
-            let args = part["args"]
-                .as_str()
-                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
-            let args = args.as_ref().unwrap_or(&part["args"]);
-            if let Some(questions) = args["questions"].as_array() {
-                content = content.children(questions.iter().map(|question| {
-                    history_cards::choice(
-                        question,
-                        &result["content"],
-                        if result["outcome"] == "success" {
-                            "已完成"
-                        } else {
-                            "已中断"
-                        },
-                    )
-                }));
-            }
-        }
     }
     if let Some(turn) = turn
         && let Some(question) = &turn.question
@@ -184,4 +173,28 @@ pub fn live_history(chats: &Chats, turn: Option<&Turn>, width: f32, cx: &Context
         });
     }
     content
+}
+
+fn answered_question(call: &serde_json::Value, result: Option<&serde_json::Value>) -> bool {
+    history_cards::text(call, "tool_name") == "ask_user_question"
+        && result.is_some_and(|result| result["outcome"] == "success")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::answered_question;
+    use serde_json::json;
+
+    #[test]
+    fn only_successfully_answered_question_tools_are_hidden() {
+        let call = json!({"tool_name": "ask_user_question"});
+        let success = json!({"outcome": "success"});
+        assert!(answered_question(&call, Some(&success)));
+        assert!(!answered_question(&call, None));
+        assert!(!answered_question(&call, Some(&json!({"outcome":"error"}))));
+        assert!(!answered_question(
+            &json!({"tool_name":"read_file"}),
+            Some(&success)
+        ));
+    }
 }

@@ -56,7 +56,7 @@ fn image_artifact() -> Div {
             .child(
                 column()
                     .gap(px(8.))
-                    .child(label("vespera-cover.png", 14.))
+                    .child(label("ani-bot-cover.png", 14.))
                     .child(muted("PNG · 1024 × 1536", 14.)),
             ),
     )

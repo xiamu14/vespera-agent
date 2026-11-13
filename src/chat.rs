@@ -88,7 +88,7 @@ fn composer(draft: &Entity<TextareaState>, app: &Vespera, cx: &Context<Vespera>)
                     Button::new("composer-attachment")
                         .accessibility_label("添加附件")
                         .disabled(!ready || running)
-                        .w(px(44.))
+                        .w(px(28.))
                         .h_full()
                         .child(icon("add-01", 20., MUTED))
                         .on_click(cx.listener(|this, _, _, cx| this.choose_attachments(cx))),
@@ -129,7 +129,7 @@ fn composer(draft: &Entity<TextareaState>, app: &Vespera, cx: &Context<Vespera>)
                                         .bg(rgb(0xffffff))
                                         .into_any_element()
                                 } else {
-                                    icon("arrow-up-02", 20., if accent { 0xffffff } else { MUTED })
+                                    icon("composer-send", 20., if accent { 0xffffff } else { MUTED })
                                         .into_any_element()
                                 })
                                 .on_click(cx.listener(move |this, _, window, cx| {

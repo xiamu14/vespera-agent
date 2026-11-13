@@ -1,4 +1,4 @@
-"""Vespera's client-independent Pydantic AI runtime."""
+"""Ani Bot's client-independent Pydantic AI runtime."""
 
 from .core import AgentCore
 

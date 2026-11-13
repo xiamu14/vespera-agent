@@ -12,10 +12,11 @@ impl RenderOnce for ResponseTime {
         if self.running {
             window.request_animation_frame();
         }
-        let elapsed = if self.seconds >= 60 {
-            format!("用时 {}分{}秒", self.seconds / 60, self.seconds % 60)
+        let seconds = self.seconds.max(1);
+        let elapsed = if seconds >= 60 {
+            format!("用时 {}分{}秒", seconds / 60, seconds % 60)
         } else {
-            format!("用时 {}秒", self.seconds)
+            format!("用时 {}秒", seconds)
         };
         column()
             .gap(px(8.))

@@ -2,7 +2,7 @@
 name = "vespera"
 version = "0.1.0"
 edition = "2024"
-description = "Vespera static GPUI desktop"
+description = "Ani Bot GPUI desktop"
 publish = false
 
 [dependencies]

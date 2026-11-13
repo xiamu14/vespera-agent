@@ -98,16 +98,6 @@ pub fn badge(status: &'static str) -> Div {
         .flex_shrink_0()
 }
 
-pub fn arrow(expanded: bool) -> Svg {
-    icon("arrow-right-01", 16., MUTED).with_transformation(Transformation::rotate(radians(
-        if expanded {
-            std::f32::consts::FRAC_PI_2
-        } else {
-            0.
-        },
-    )))
-}
-
 #[derive(IntoElement)]
 pub struct Tools {
     pub id: SharedString,
@@ -163,7 +153,12 @@ impl RenderOnce for Tools {
                     .items_center()
                     .gap(px(8.))
                     .child(if expanded {
-                        label("工具调用", 14.).flex_1().into_any_element()
+                        row()
+                            .flex_1()
+                            .gap(px(8.))
+                            .child(section_marker())
+                            .child(label("工具调用", 14.))
+                            .into_any_element()
                     } else {
                         div()
                             .flex_1()
@@ -181,7 +176,6 @@ impl RenderOnce for Tools {
                             )
                             .into_any_element()
                     })
-                    .child(arrow(expanded))
                     .on_click(move |_, _, cx| {
                         state.update(cx, |open, cx| {
                             *open = !*open;
@@ -267,7 +261,6 @@ impl RenderOnce for ToolRow {
                     .justify_start()
                     .py(px(3.))
                     .child(self.entry.summary().flex_1().min_w_0())
-                    .child(arrow(open))
                     .on_click(move |_, _, cx| {
                         state.update(cx, |open, cx| {
                             *open = !*open;

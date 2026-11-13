@@ -25,6 +25,7 @@ mod project_group;
 mod question_card;
 mod response_time;
 mod sidebar;
+mod sidebar_title;
 mod startup;
 mod status;
 mod system_notification;

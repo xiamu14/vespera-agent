@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import sysconfig
 from pathlib import Path
 import sqlite3
 import httpx
@@ -27,6 +29,9 @@ EXPECTED_ERRORS = (
 
 class Bridge:
     def __init__(self, data, resources):
+        # Finder does not add the bundled search executable to PATH.
+        tools = Path(sysconfig.get_path("purelib")) / "bin"
+        os.environ["PATH"] = os.pathsep.join((str(tools), os.environ.get("PATH", os.defpath)))
         load_dotenv(Path(data) / ".env")
         self.core = AgentCore(Path(data), Path(resources))
         self.jobs = {}

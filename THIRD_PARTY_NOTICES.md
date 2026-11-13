@@ -4,7 +4,7 @@
 - GPUI snapshot crates: https://github.com/zed-industries/zed — see each crate's included license.
 - Hugeicons Free Stroke Rounded SVGs: https://hugeicons.com/icons/stroke-rounded.
   Downloaded from the Free collection through the user's Hugeicons session.
-- App icon and attachment image: supplied by the user in the Vespera Sketch document.
+- App icon and attachment image: supplied by the user in the Ani Bot Sketch document.
 - System fonts are loaded from macOS and are not redistributed.
 
 Cargo.lock records the exact Rust dependency graph. This local development bundle
