@@ -68,7 +68,7 @@ fn context_section(model: impl Into<SharedString>, used: Option<f64>, cost: Opti
     let fraction = used
         .filter(|value| value.is_finite())
         .map(|value| value.clamp(0., 1.));
-    inspector_section(label("运行上下文", 16.)).child(
+    inspector_section(label("运行状态", 16.)).child(
         column()
             .gap(px(8.))
             .pl(px(9.))
@@ -85,7 +85,7 @@ fn context_section(model: impl Into<SharedString>, used: Option<f64>, cost: Opti
                             .accessibility_label("上下文使用量")
                             .value((fraction.unwrap_or(0.) * 100.) as f32)
                             .indeterminate(fraction.is_none())
-                            .w(px(100.))
+                            .w(px(80.))
                             .h(px(4.))
                             .flex_shrink_0()
                             .rounded_full()
@@ -103,11 +103,17 @@ fn context_section(model: impl Into<SharedString>, used: Option<f64>, cost: Opti
             .child(
                 row()
                     .child(muted("费用（总计）", 14.).w(px(100.)).flex_shrink_0())
-                    .child(muted(
-                        cost.map(|cost| format!("$ {cost:.2}"))
-                            .unwrap_or_else(|| "—".into()),
-                        14.,
-                    )),
+                    .child(match cost {
+                        Some(cost) => {
+                            let mut amount_font = body_font();
+                            amount_font.weight = FontWeight::SEMIBOLD;
+                            row()
+                                .gap(px(4.))
+                                .child(muted("$", 14.).font(emphasis_font()))
+                                .child(muted(format!("{cost:.2}"), 16.).font(amount_font))
+                        }
+                        None => muted("—", 14.),
+                    }),
             ),
     )
 }
@@ -328,7 +334,7 @@ mod layout_tests {
     }
 
     #[test]
-    fn context_progress_is_exactly_one_hundred_pixels_wide() {
+    fn context_progress_is_eighty_pixels_wide() {
         let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
         cx.update(|cx| init(cx));
         let (_, window) = cx.add_window_view(|window, cx| {
@@ -339,7 +345,7 @@ mod layout_tests {
         window.update(|window, cx| {
             window.draw(cx).clear(cx);
             let bar = find(window, &[], &"context-progress".into()).unwrap();
-            assert_eq!(bar.bounds().size.width, px(100.));
+            assert_eq!(bar.bounds().size.width, px(80.));
             assert_eq!(bar.bounds().size.height, px(4.));
         });
     }
