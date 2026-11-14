@@ -1,7 +1,8 @@
 use crate::masked_scroll::MaskedScroll;
 use crate::{artifacts, chat, fixtures, memory, sidebar, status, theme::*};
-use gpui_kit::component::TitleBar;
 use gpui_kit::*;
+use gpui_kit::{base::animation::ease_in_out_cubic, component::TitleBar};
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InspectorTab {
@@ -14,17 +15,21 @@ pub enum InspectorTab {
 impl InspectorTab {
     pub const ALL: [Self; 3] = [Self::Status, Self::Artifacts, Self::Memory];
 
+    fn position(self) -> f32 {
+        self as u8 as f32
+    }
+
     fn title(self) -> &'static str {
         match self {
             Self::Status => "状态",
-            Self::Artifacts => "产物",
+            Self::Artifacts => "交付",
             Self::Memory => "记忆",
         }
     }
 
     fn icon(self) -> &'static str {
         match self {
-            Self::Status => "task-01",
+            Self::Status => "computer-activity",
             Self::Artifacts => "package",
             Self::Memory => "brain-02",
         }
@@ -34,6 +39,8 @@ impl InspectorTab {
 #[derive(Default)]
 pub struct Vespera {
     pub tab: InspectorTab,
+    tab_slide: Option<(f32, Instant)>,
+    pub(crate) composer_menu: crate::composer_menu::ComposerMenu,
     pub(crate) timeline: crate::chat_timeline::ChatTimeline,
     pub(crate) chats: Option<crate::chat_state::Chats>,
     search_observed: bool,
@@ -100,55 +107,105 @@ impl Vespera {
         this
     }
 
-    fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
+    fn tab_position(&self, now: Instant) -> f32 {
+        let target = self.tab.position();
+        self.tab_slide.map_or(target, |(from, started)| {
+            let time = (now.duration_since(started).as_secs_f32() / 0.2).min(1.);
+            from + (target - from) * ease_in_out_cubic(time)
+        })
+    }
+
+    fn tab_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         const PADDING: f32 = 3.;
         const BORDER_WIDTH: f32 = 1.;
-        let control_height = INSPECTOR_TAB_HEIGHT - 2. * (PADDING + BORDER_WIDTH);
+        const GAP: f32 = 8.;
+        let inset = PADDING + BORDER_WIDTH;
+        let control_height = INSPECTOR_TAB_HEIGHT - 2. * inset;
+        let radius = limited_radius(CONTROL_RADIUS - inset, control_height);
+        let now = Instant::now();
+        let position = if cx.reduce_motion() {
+            self.tab.position()
+        } else {
+            if self
+                .tab_slide
+                .is_some_and(|(_, started)| now.duration_since(started).as_secs_f32() < 0.2)
+            {
+                window.request_animation_frame();
+            }
+            self.tab_position(now)
+        };
         let controls = InspectorTab::ALL.map(|tab| {
-            let active = tab == self.tab;
-            let mut control = row()
+            let color = if tab == self.tab { INK } else { MUTED };
+            row()
                 .id(tab.title())
                 .flex_1()
                 .min_w_0()
                 .h(px(control_height))
                 .gap(px(8.))
                 .justify_center()
-                .rounded(limited_radius(
-                    CONTROL_RADIUS - PADDING - BORDER_WIDTH,
-                    control_height,
-                ))
-                .text_color(rgb(if active { INK } else { MUTED }))
-                .child(icon(tab.icon(), 14., if active { INK } else { MUTED }))
+                .text_color(rgb(color))
+                .child(icon(tab.icon(), 14., color))
                 .child(label(tab.title(), 16.))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.tab = tab;
-                    cx.notify();
-                }));
-            if active {
-                control = control.bg(rgb(0xffffff)).shadow(vec![BoxShadow {
-                    inset: false,
-                    color: rgba(0x00000010).into(),
-                    offset: point(px(0.), px(2.)),
-                    blur_radius: px(4.),
-                    spread_radius: px(0.),
-                }]);
-            }
-            control
+                    if this.tab != tab {
+                        let now = Instant::now();
+                        this.tab_slide =
+                            (!cx.reduce_motion()).then(|| (this.tab_position(now), now));
+                        this.tab = tab;
+                        cx.notify();
+                    }
+                }))
         });
         row()
             .h(px(INSPECTOR_TAB_HEIGHT))
             .w_full()
             .flex_shrink_0()
             .p(px(PADDING))
-            .gap(px(8.))
             .rounded(limited_radius(CONTROL_RADIUS, INSPECTOR_TAB_HEIGHT))
             .border(px(BORDER_WIDTH))
             .border_color(rgb(0xededee))
             .bg(rgb(0xf8f8f8))
-            .children(controls)
+            .child(
+                row()
+                    .relative()
+                    .w_full()
+                    .h(px(control_height))
+                    .gap(px(GAP))
+                    .child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, (), window, _| {
+                                let width = ((bounds.size.width - px(2. * GAP)) / 3.).max(px(0.));
+                                let plate = Bounds {
+                                    origin: bounds.origin
+                                        + point((width + px(GAP)) * position, px(0.)),
+                                    size: size(width, px(control_height)),
+                                };
+                                let corners = Corners::all(radius);
+                                window.paint_drop_shadows(
+                                    plate,
+                                    corners,
+                                    &[BoxShadow {
+                                        inset: false,
+                                        color: rgba(0x00000010).into(),
+                                        offset: point(px(0.), px(2.)),
+                                        blur_radius: px(4.),
+                                        spread_radius: px(0.),
+                                    }],
+                                );
+                                let mut background = fill(plate, rgb(0xffffff));
+                                background.corner_radii = corners;
+                                window.paint_quad(background);
+                            },
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                    .children(controls),
+            )
     }
 
-    fn inspector(&self, cx: &mut Context<Self>) -> Div {
+    fn inspector(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let selected = self
             .chats
             .as_ref()
@@ -163,7 +220,7 @@ impl Vespera {
                 "inspector-content",
                 64.,
                 if live {
-                    artifacts::live(data)
+                    artifacts::live(data, selected.is_some())
                 } else {
                     artifacts::artifacts()
                 },
@@ -189,7 +246,7 @@ impl Vespera {
             .pr(px(20.))
             .pb(px(PANEL_TOP))
             .gap(px(20.))
-            .child(self.tab_bar(cx))
+            .child(self.tab_bar(window, cx))
             .child(content)
     }
 }
@@ -236,15 +293,22 @@ impl Render for Vespera {
             self.draft_subscriptions
                 .push(cx.observe(&draft, |_, _, cx| cx.notify()));
             if self.chats.is_some() {
+                self.draft_subscriptions
+                    .push(crate::composer_menu::intercept_keys(&draft, window, cx));
                 self.draft_subscriptions.push(cx.subscribe_in(
                     &draft,
                     window,
                     |this, draft, event, window, cx| {
+                        if matches!(event, gpui_kit::base::input::InputEvent::Change) {
+                            this.update_composer_menu(&draft, cx);
+                        }
                         if let gpui_kit::base::input::InputEvent::PressEnter {
                             shift: false, ..
                         } = event
                         {
-                            this.submit_draft(&draft, window, cx);
+                            if !this.choose_composer_menu(&draft, window, cx) {
+                                this.submit_draft(&draft, window, cx);
+                            }
                         }
                     },
                 ));
@@ -256,7 +320,7 @@ impl Render for Vespera {
             .and_then(|chats| chats.history.visible())
             .and_then(|chat| chat.work_path.clone());
         let breadcrumb = if self.chats.is_none() {
-            Some("advanced-course  /  coder-cli".to_owned())
+            Some("advanced-course  /  ani".to_owned())
         } else {
             work_path
         };
@@ -310,7 +374,30 @@ impl Render for Vespera {
                         cx,
                     ))
                     .child(chat::chat(chat_width, &draft, self, cx))
-                    .child(self.inspector(cx)),
+                    .child(self.inspector(window, cx)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{InspectorTab, Vespera};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn tab_plate_retargets_from_its_current_position() {
+        let start = Instant::now();
+        let mut app = Vespera {
+            tab: InspectorTab::Memory,
+            tab_slide: Some((0., start)),
+            ..Vespera::default()
+        };
+        let now = start + Duration::from_millis(50);
+        let position = app.tab_position(now);
+        assert!(position > 0. && position < 1.);
+        app.tab_slide = Some((position, now));
+        app.tab = InspectorTab::Status;
+        assert_eq!(app.tab_position(now), position);
+        assert_eq!(app.tab_position(now + Duration::from_millis(200)), 0.);
     }
 }

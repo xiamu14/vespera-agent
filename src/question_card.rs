@@ -4,6 +4,8 @@ use gpui_kit::{
     *,
 };
 
+const RESPONSE_ROW_HEIGHT: Pixels = px(40.);
+
 pub fn control(multiple: bool, selected: bool) -> Div {
     let frame = div()
         .size(px(16.))
@@ -18,12 +20,11 @@ pub fn control(multiple: bool, selected: bool) -> Div {
     } else {
         frame.rounded_full()
     };
-    if selected && multiple {
+    if selected {
         frame
             .bg(rgb(PRIMARY))
+            .debug_selector(|| "checked-question-option".into())
             .child(label("✓", 12.).text_color(rgb(0xffffff)))
-    } else if selected {
-        frame.child(div().size(px(8.)).rounded_full().bg(rgb(PRIMARY)))
     } else {
         frame
     }
@@ -34,6 +35,7 @@ pub struct QuestionCard {
     pub question: Question,
     pub conversation_id: String,
     pub answering: bool,
+    pub width: Pixels,
     pub app: WeakEntity<Vespera>,
 }
 
@@ -41,6 +43,7 @@ impl RenderOnce for QuestionCard {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let question = self.question;
         let token = question.id;
+        let code_width = (self.width - 2. * (CHAT_SECTION_PADDING_X + px(1.))).max(px(0.));
         let input = window.use_keyed_state(
             SharedString::from(format!("question-input-{}-{token}", self.conversation_id)),
             cx,
@@ -51,14 +54,21 @@ impl RenderOnce for QuestionCard {
             },
         );
         let mut content = chat_card()
-            .px(px(15.))
-            .py(px(11.))
+            .px(CHAT_SECTION_PADDING_X)
+            .py(CHAT_SECTION_PADDING_Y)
             .gap(px(8.))
             .child(
                 row()
+                    .debug_selector(|| "question-header".into())
+                    .min_h(CHAT_SECTION_HEADER_HEIGHT)
                     .gap(px(8.))
                     .flex_wrap()
-                    .child(label(question.header.clone(), 14.).font(emphasis_font()))
+                    .child(
+                        row()
+                            .gap(px(8.))
+                            .child(section_marker())
+                            .child(label(question.header.clone(), 14.)),
+                    )
                     .child(muted(
                         if question.multi_select {
                             "（可选择多项）"
@@ -68,7 +78,28 @@ impl RenderOnce for QuestionCard {
                         12.,
                     )),
             )
-            .children((!question.details.is_empty()).then(|| muted(question.details.clone(), 14.)))
+            .children((!question.details.is_empty()).then(|| {
+                if let Some((details, code)) = question.details.rsplit_once("\n\n```") {
+                    column()
+                        .gap(px(8.))
+                        .min_w_0()
+                        .child(muted(details.to_owned(), 14.))
+                        .child(crate::markdown::markdown_surface(
+                            crate::markdown::markdown(
+                                SharedString::from(format!(
+                                    "question-details-{}-{token}",
+                                    self.conversation_id
+                                )),
+                                format!("```{code}"),
+                            )
+                            .code_block_actions(move |block, window, _| {
+                                crate::markdown::code_header(block, code_width, window)
+                            }),
+                        ))
+                } else {
+                    muted(question.details.clone(), 14.)
+                }
+            }))
             .child(muted(question.question.clone(), 14.));
         for (index, option) in question.options.iter().enumerate() {
             let selected = question.selected.contains(&option.label);
@@ -80,11 +111,12 @@ impl RenderOnce for QuestionCard {
                     .accessibility_label(choice.clone())
                     .disabled(self.answering)
                     .w_full()
+                    .min_h(RESPONSE_ROW_HEIGHT)
                     .justify_start()
                     .gap(px(10.))
                     .px(px(10.))
                     .py(px(8.))
-                    .rounded(px(DETAIL_RADIUS))
+                    .rounded(px(CONTROL_RADIUS))
                     .bg(rgb(FIELD))
                     .child(control(question.multi_select, selected))
                     .child(label(option.label.clone(), 14.).flex_1().min_w_0())
@@ -100,6 +132,8 @@ impl RenderOnce for QuestionCard {
         let custom = input.clone();
         content = content.child(
             row()
+                .debug_selector(|| "question-opinion".into())
+                .min_h(RESPONSE_ROW_HEIGHT)
                 .gap(px(8.))
                 .rounded(px(CONTROL_RADIUS))
                 .bg(rgb(FIELD))
@@ -171,18 +205,80 @@ mod tests {
     }
 
     impl Render for Host {
-        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            let question: Question = serde_json::from_value(serde_json::json!({
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let mut question: Question = serde_json::from_value(serde_json::json!({
                 "header":"确认需求", "question":"选择处理方式", "multi_select":self.multiple,
                 "options":[{"label":"A","description":"第一项"},{"label":"B"}]
             }))
             .unwrap();
+            question.details = "工具：shell\n\n```json\n{\"command\":\"pwd\"}\n```".into();
+            let turn = self.app.read(cx).live.turns.get("test");
             div().w(gpui_kit::px(420.)).child(QuestionCard {
-                question,
+                question: turn.and_then(|turn| turn.question.clone()).unwrap_or(question),
                 conversation_id: "test".into(),
-                answering: false,
+                answering: turn.is_some_and(|turn| turn.answering),
+                width: gpui_kit::px(420.),
                 app: self.app.downgrade(),
             })
+        }
+    }
+
+    #[test]
+    fn choices_render_checked_before_submitting() {
+        use gpui_kit::{Modifiers, base::test_support::find};
+        use std::time::Duration;
+
+        let mut cx = TestAppContext::build(TestDispatcher::new(0), None);
+        cx.update(|cx| init(cx));
+        let executor = cx.background_executor.clone();
+        for multiple in [false, true] {
+            let mut fixture = None;
+            let (_, window) = cx.add_window_view(|window, cx| {
+                let app = cx.new(|_| {
+                    let mut app = Vespera::default();
+                    let mut turn = crate::live_state::Turn::new("test", &[]);
+                    turn.event(serde_json::json!({"type":"question", "question_id":0, "question":{
+                        "header":"工具审批", "question":"允许此次调用？", "multi_select":multiple,
+                        "options":[{"label":"本次允许"}, {"label":"拒绝"}]
+                    }}));
+                    app.live.turns.insert("test".into(), turn);
+                    app
+                });
+                fixture = Some(app.clone());
+                let host = cx.new(|cx| {
+                    cx.observe(&app, |_, _, cx| cx.notify()).detach();
+                    Host { app: app.clone(), multiple }
+                });
+                Root::new(host, window, cx)
+            });
+            let option = window.update(|window, cx| {
+                window.draw(cx).clear(cx);
+                find(window, &[], &"question-0-0".into()).unwrap().bounds().center()
+            });
+            window.simulate_click(option, Modifiers::default());
+            window.run_until_parked();
+            window.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+            assert!(window.debug_bounds("checked-question-option").is_some());
+            if multiple {
+                let confirm = window.update(|window, _| {
+                    find(window, &[], &"confirm-question".into()).unwrap().bounds().center()
+                });
+                window.simulate_click(confirm, Modifiers::default());
+                window.run_until_parked();
+            }
+            executor.advance_clock(Duration::from_millis(200));
+            window.run_until_parked();
+            window.update(|window, cx| {
+                window.refresh();
+                window.draw(cx).clear(cx);
+            });
+            assert!(window.debug_bounds("checked-question-option").is_some());
+            window.update(|_, cx| {
+                fixture.unwrap().update(cx, |app, _| app.live.turns.clear());
+            });
         }
     }
 
@@ -197,8 +293,11 @@ mod tests {
                 Root::new(host, window, cx)
             });
             window.run_until_parked();
-            window.update(|window, cx| {
+            let option_height = window.update(|window, cx| {
                 window.draw(cx).clear(cx);
+                let copy = gpui_kit::base::test_support::find(window, &[], &"copy-code".into())
+                    .expect("approval code block has a copy action");
+                assert_eq!(copy.label(), Some("复制代码"));
                 assert!(
                     gpui_kit::base::test_support::find(
                         window,
@@ -210,16 +309,26 @@ mod tests {
                 let option =
                     gpui_kit::base::test_support::find(window, &[], &"question-0-0".into())
                         .unwrap();
-                assert!(
-                    option.bounds().size.height <= gpui_kit::px(40.),
-                    "options show only a title"
-                );
+                let second =
+                    gpui_kit::base::test_support::find(window, &[], &"question-0-1".into())
+                        .unwrap();
+                assert_eq!(second.bounds().size.height, option.bounds().size.height);
+                assert_eq!(option.bounds().size.height, super::RESPONSE_ROW_HEIGHT);
                 assert_eq!(
                     gpui_kit::base::test_support::find(window, &[], &"confirm-question".into())
                         .is_some(),
                     multiple
                 );
+                option.bounds().size.height
             });
+            assert_eq!(
+                window.debug_bounds("question-opinion").unwrap().size.height,
+                option_height
+            );
+            assert_eq!(
+                window.debug_bounds("question-header").unwrap().size.height,
+                crate::theme::CHAT_SECTION_HEADER_HEIGHT
+            );
         }
     }
 }

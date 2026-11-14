@@ -9,7 +9,7 @@ from tempfile import TemporaryDirectory
 
 
 ROOT = Path(__file__).resolve().parent.parent
-CODER = ROOT.parent / "coder-cli"
+AGENT_CORE = ROOT / "agent_core"
 MACHO = {
     bytes.fromhex(magic) for magic in ("feedface", "cefaedfe", "feedfacf", "cffaedfe", "cafebabe", "cafebabf")
 }
@@ -38,12 +38,10 @@ def stage_agent(contents, python):
     stdlib = home / "lib" / "python3.13"
     shutil.copytree(library.parent / "python3.13", stdlib, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("site-packages", "__pycache__"))
-    shutil.copytree(ROOT / "agent_core" / "vespera_agent", resources / "agent_core" / "vespera_agent",
-                    dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
-    for name in ("agent", "context", "integrations", "storage", "tools", "prompts", "skills"):
-        shutil.copytree(CODER / name, resources / "coder-cli" / name, dirs_exist_ok=True,
+    for name in ("vespera_agent", "agent", "context", "integrations", "storage", "tools", "prompts", "skills"):
+        shutil.copytree(AGENT_CORE / name, resources / "agent_core" / name, dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns("__pycache__"))
-    shutil.copy2(CODER / "provider.jsonc", resources / "coder-cli")
+    shutil.copy2(AGENT_CORE / "provider.jsonc", resources / "agent_core")
     embedded = frameworks / library.name
     shutil.copy2(library, embedded)
     os.chmod(embedded, 0o755)
@@ -71,7 +69,7 @@ def package_agent(contents, *, signing_identity="-"):
         ).strip()
         target = stage_agent(contents, python)
         requirements = staging / "requirements.txt"
-        run(uv, "export", "--project", CODER, "--locked", "--no-dev", "--no-emit-workspace",
+        run(uv, "export", "--project", AGENT_CORE, "--locked", "--no-dev", "--no-emit-project",
             "--output-file", requirements, "--quiet")
         run(uv, "pip", "sync", "--python", python, "--target", target, "--link-mode", "copy", requirements)
 

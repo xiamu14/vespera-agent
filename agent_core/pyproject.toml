@@ -1,0 +1,33 @@
+[project]
+name = "ani-agent-core"
+version = "0.1.0"
+description = "Vespera Agent Core for the Ani Bot desktop app"
+authors = [
+    { name = "xiazhigang@yev.com", email = "xiazhigang@yev.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "dotenv>=0.9.9",
+    "httpx[socks]>=0.28.1",
+    "httpx2>=2.16.0",
+    "logfire>=5.4.0",
+    "playwright>=1.64.1",
+    "pydantic-ai>=2.65.0",
+    "pydantic-ai-harness[coder,skills]>=0.65.0",
+    "pydantic-ai-slim[openai,web-fetch]",
+    "python-dotenv",
+    "tavily-python>=0.8.5",
+]
+
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agent*", "context*", "integrations*", "storage*", "tools*", "vespera_agent*"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]

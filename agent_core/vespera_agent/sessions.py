@@ -49,6 +49,11 @@ class Sessions:
                 started_at TEXT NOT NULL, finished_at TEXT,
                 PRIMARY KEY (run_id, question_id)
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS vespera_deliveries (
+                conversation_id TEXT NOT NULL, run_id TEXT NOT NULL, source_run_id TEXT NOT NULL,
+                call_id TEXT NOT NULL, title TEXT NOT NULL, timestamp TEXT NOT NULL, items TEXT NOT NULL,
+                PRIMARY KEY (conversation_id, source_run_id, call_id)
+            )""")
             columns = {row[1] for row in db.execute("PRAGMA table_info(vespera_sessions)")}
             if "created_at" not in columns:
                 db.execute("ALTER TABLE vespera_sessions ADD COLUMN created_at TEXT")
@@ -58,6 +63,19 @@ class Sessions:
             )""")
             db.execute("""CREATE INDEX IF NOT EXISTS vespera_memory_conversation
                 ON vespera_project_memory(conversation_id)""")
+
+    def save_delivery(self, conversation_id, run_id, title, source_run_id, call_id, timestamp, items):
+        with closing(sqlite3.connect(self.database)) as db, db:
+            db.execute("INSERT OR IGNORE INTO vespera_deliveries VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (conversation_id, run_id, source_run_id, call_id, title or "", timestamp, json.dumps(items)))
+
+    def deliveries(self, conversation_id):
+        with closing(sqlite3.connect(self.database)) as db:
+            return [(run, source, call, title, time, json.loads(items))
+                    for run, source, call, title, time, items in db.execute(
+                        "SELECT run_id, source_run_id, call_id, title, timestamp, items "
+                        "FROM vespera_deliveries WHERE conversation_id=? ORDER BY timestamp, rowid",
+                        (conversation_id,))]
 
     def user_wait(self, run_id, question_id, *, finished=False):
         with closing(sqlite3.connect(self.database)) as db, db:

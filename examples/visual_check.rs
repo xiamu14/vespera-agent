@@ -59,6 +59,7 @@ fn main() -> anyhow::Result<()> {
     );
     cx.update(|cx| {
         init(cx);
+        cx.set_reduce_motion(true);
         Theme::change(ThemeMode::Light, None, cx);
     });
     let mut view = None;

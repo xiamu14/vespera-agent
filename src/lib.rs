@@ -1,6 +1,7 @@
 #[cfg(target_os = "macos")]
 pub mod agent_bridge;
 mod app;
+mod background_tasks;
 mod artifacts;
 pub mod assets;
 mod chat;
@@ -10,10 +11,12 @@ mod chat_history;
 mod chat_scrollbar;
 mod chat_state;
 mod chat_timeline;
+mod composer_menu;
 mod file_tree;
 mod fixtures;
 mod history_cards;
 mod inspector;
+mod inspector_collapse;
 mod live_chat;
 mod live_state;
 mod markdown;

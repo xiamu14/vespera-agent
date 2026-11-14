@@ -57,7 +57,7 @@ class QuestionTimingTests(unittest.IsolatedAsyncioTestCase):
                 yield part.content
 
         with TemporaryDirectory() as directory:
-            resources = Path(__file__).resolve().parents[3] / "coder-cli"
+            resources = Path(__file__).resolve().parents[1]
             core = AgentCore(Path(directory), resources, model=FunctionModel(model, stream_function=stream))
             cid = core.create()["conversation_id"]
             events = []

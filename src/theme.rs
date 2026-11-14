@@ -14,6 +14,11 @@ pub const PANEL_RADIUS: f32 = 18.;
 pub const CONTROL_RADIUS: f32 = 10.;
 pub const DETAIL_RADIUS: f32 = 6.;
 pub const SELECTION_RADIUS: f32 = 4.;
+pub(crate) const CHAT_SECTION_PADDING_X: Pixels = px(15.);
+pub(crate) const CHAT_SECTION_PADDING_Y: Pixels = px(11.);
+pub(crate) const CHAT_SECTION_HEADER_HEIGHT: Pixels = px(32.);
+pub(crate) const INSPECTOR_SECTION_PADDING: Pixels = px(14.);
+pub(crate) const INSPECTOR_SECTION_GAP: Pixels = px(12.);
 
 pub fn limited_radius(radius: f32, short_side: f32) -> Pixels {
     px(radius.min(short_side * 0.30))
@@ -163,13 +168,16 @@ pub fn section_marker() -> Div {
 }
 
 pub fn inspector_section(header: Div) -> Div {
-    card().p(px(14.)).gap(px(12.)).child(
-        row()
-            .w_full()
-            .gap(px(8.))
-            .child(section_marker())
-            .child(header),
-    )
+    card()
+        .p(INSPECTOR_SECTION_PADDING)
+        .gap(INSPECTOR_SECTION_GAP)
+        .child(
+            row()
+                .w_full()
+                .gap(px(8.))
+                .child(section_marker())
+                .child(header),
+        )
 }
 
 pub fn composer_surface() -> Div {

@@ -12,11 +12,19 @@ use crate::{
 
 pub use crate::live_state::{LiveChat, Turn, filename};
 
+const ANSWER_FEEDBACK: Duration = Duration::from_millis(220);
+
 #[derive(Deserialize)]
 struct Poll {
     events: Vec<Value>,
     done: bool,
     error: Option<String>,
+    model_error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct SendReceipt {
+    run_id: String,
 }
 
 impl Vespera {
@@ -94,7 +102,16 @@ impl Vespera {
             return;
         };
         let prompt = draft.read(cx).value().trim().to_owned();
-        if self.live.turns.get(&id).is_some_and(|turn| turn.running) {
+        if chats.history.visible().is_none()
+            || (prompt.is_empty() && self.selected_files().is_empty())
+        {
+            return;
+        }
+        if let Some(turn) = self.live.turns.get_mut(&id).filter(|turn| turn.running) {
+            if !turn.composer_busy() && !turn.stopping {
+                turn.send_after_stop = true;
+                self.stop_turn(cx);
+            }
             return;
         }
         if self
@@ -106,11 +123,8 @@ impl Vespera {
             notify("请先重新读取会话", "上一次运行的消息尚未保存到历史。");
             return;
         }
-        if chats.history.visible().is_none()
-            || (prompt.is_empty() && self.selected_files().is_empty())
-        {
-            return;
-        }
+        self.dismiss_composer_menu(cx);
+        self.live.model_errors.remove(&id);
         let paths = self.live.attachments.remove(&id).unwrap_or_default();
         self.live
             .turns
@@ -121,7 +135,7 @@ impl Vespera {
             draft.focus_handle(cx).focus(window, cx);
         });
         cx.notify();
-        self.start_turn(id, prompt, paths, cx);
+        self.start_turn(id, prompt, paths, draft.clone(), window, cx);
     }
 
     fn start_turn(
@@ -129,28 +143,35 @@ impl Vespera {
         id: String,
         prompt: String,
         paths: Vec<String>,
+        draft: Entity<TextareaState>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) {
         let executor = cx.background_executor().clone();
-        cx.spawn(async move |view, cx| {
+        cx.spawn_in(window, async move |view, cx| {
             let payload =
                 json!({"command":"send", "conversation_id":id, "prompt":prompt, "paths":paths});
             let started = executor
-                .spawn(async move { request_payload::<Value>(payload) })
+                .spawn(async move { request_payload::<SendReceipt>(payload) })
                 .await;
-            if let Err(error) = started {
-                let _ = view.update(cx, |this, cx| {
-                    if let Some(turn) = this.live.turns.get_mut(&id) {
-                        turn.running = false;
-                    }
-                    notify("无法发送消息", error.message());
-                    cx.notify();
-                });
-                return;
-            }
+            let receipt = match started {
+                Ok(receipt) => receipt,
+                Err(error) => {
+                    let _ = view.update(cx, |this, cx| {
+                        if let Some(turn) = this.live.turns.get_mut(&id) {
+                            turn.running = false;
+                            turn.stopping = false;
+                        }
+                        notify("无法发送消息", error.message());
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
             let cancel_queued = view
                 .update(cx, |this, _| {
                     if let Some(turn) = this.live.turns.get_mut(&id) {
+                        turn.bind_run(&receipt.run_id);
                         turn.started = true;
                         turn.stopping
                     } else {
@@ -168,7 +189,7 @@ impl Vespera {
                 }
             }
             let mut failures = 0;
-            let error = loop {
+            let (error, model_error) = loop {
                 let target = id.clone();
                 let poll = executor
                     .spawn(async move { request::<Poll>("poll", Some(&target)) })
@@ -178,19 +199,29 @@ impl Vespera {
                         failures = 0;
                         if view
                             .update(cx, |this, cx| {
-                                if let Some(turn) = this.live.turns.get_mut(&id) {
-                                    for event in poll.events {
+                                for event in poll.events {
+                                    if event["type"] == "delegation" {
+                                        if let Ok(task) =
+                                            serde_json::from_value(event["task"].clone())
+                                        {
+                                            this.live
+                                                .tasks
+                                                .entry(id.clone())
+                                                .or_default()
+                                                .update(task);
+                                        }
+                                    } else if let Some(turn) = this.live.turns.get_mut(&id) {
                                         turn.event(event);
                                     }
-                                    cx.notify();
                                 }
+                                cx.notify();
                             })
                             .is_err()
                         {
                             return;
                         }
                         if poll.done {
-                            break poll.error;
+                            break (poll.error, poll.model_error);
                         }
                     }
                     Err(RequestError::Transport(error)) => {
@@ -200,7 +231,7 @@ impl Vespera {
                         }
                         executor.timer(Duration::from_secs(1)).await;
                     }
-                    Err(error) => break Some(error.message().to_owned()),
+                    Err(error) => break (Some(error.message().to_owned()), None),
                 }
                 executor.timer(Duration::from_millis(60)).await;
             };
@@ -208,7 +239,22 @@ impl Vespera {
             let snapshot = executor
                 .spawn(async move { request::<Opened>("open", Some(&target)) })
                 .await;
-            let _ = view.update(cx, |this, cx| this.finish_turn(&id, snapshot, error, cx));
+            let _ = cx.update(|window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    let send_after_stop = this
+                        .live
+                        .turns
+                        .get(&id)
+                        .is_some_and(|turn| turn.send_after_stop);
+                    this.finish_turn(&id, snapshot, error, model_error, cx);
+                    if send_after_stop
+                        && this.chats.as_ref().and_then(|chats| chats.selected.as_deref())
+                            == Some(id.as_str())
+                    {
+                        this.submit_draft(&draft, window, cx);
+                    }
+                });
+            });
         })
         .detach();
     }
@@ -218,11 +264,17 @@ impl Vespera {
         id: &str,
         snapshot: Result<Opened, RequestError>,
         error: Option<String>,
+        model_error: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(turn) = self.live.turns.get_mut(id) {
             turn.running = false;
+            turn.stopping = false;
             turn.question = None;
+            turn.model_failure = None;
+        }
+        if let Some(message) = model_error {
+            self.live.model_errors.insert(id.to_owned(), message);
         }
         if let Some(error) = &error {
             notify("对话未完成", error);
@@ -233,12 +285,7 @@ impl Vespera {
                     .live
                     .turns
                     .get(id)
-                    .and_then(|turn| turn.run_id.as_deref())
-                    .is_some_and(|run_id| {
-                        chat.history
-                            .iter()
-                            .any(|message| message.run_id.as_deref() == Some(run_id))
-                    });
+                    .is_some_and(|turn| turn.saved_in(&chat.history));
                 if saved {
                     self.live.turns.remove(id);
                 }
@@ -256,6 +303,20 @@ impl Vespera {
         self.reload_list(cx);
         self.load_inspector(cx);
         cx.notify();
+    }
+
+    pub(crate) fn retry_model(&mut self, id: String, token: String, cx: &mut Context<Self>) {
+        let request = cx.background_executor().spawn(async move {
+            request_payload::<bool>(
+                json!({"command":"retry_model", "conversation_id":id, "token":token}),
+            )
+        });
+        cx.spawn(async move |_, _| {
+            if let Err(error) = request.await {
+                notify("无法重试模型请求", error.message());
+            }
+        })
+        .detach();
     }
 
     pub(crate) fn stop_turn(&mut self, cx: &mut Context<Self>) {
@@ -291,6 +352,7 @@ impl Vespera {
     fn stop_failed(&mut self, id: &str, error: RequestError, cx: &mut Context<Self>) {
         if let Some(turn) = self.live.turns.get_mut(id) {
             turn.stopping = false;
+            turn.send_after_stop = false;
         }
         notify("无法停止对话", error.message());
         cx.notify();
@@ -307,17 +369,39 @@ impl Vespera {
         let Some(turn) = self.live.turns.get_mut(&id) else {
             return;
         };
-        if turn.answering || turn.question.as_ref().map(|question| question.id) != Some(token) {
+        let Some(question) = turn.question.as_mut().filter(|question| question.id == token) else {
             return;
+        };
+        if turn.answering {
+            return;
+        }
+        let show_feedback = !selected.is_empty();
+        if show_feedback {
+            question.selected.clone_from(&selected);
         }
         turn.answering = true;
         cx.notify();
         let payload = json!({"command":"answer","conversation_id":id,"question_id":token,"selected":selected,"text":text});
-        let request = cx
-            .background_executor()
-            .spawn(async move { request_payload::<bool>(payload) });
+        let executor = cx.background_executor().clone();
         cx.spawn(async move |view, cx| {
-            let result = request.await;
+            if show_feedback {
+                executor.timer(ANSWER_FEEDBACK).await;
+                let still_pending = view
+                    .update(cx, |this, _| {
+                        this.live.turns.get(&id).is_some_and(|turn| {
+                            turn.running
+                                && turn.answering
+                                && turn.question.as_ref().is_some_and(|question| question.id == token)
+                        })
+                    })
+                    .unwrap_or(false);
+                if !still_pending {
+                    return;
+                }
+            }
+            let result = executor
+                .spawn(async move { request_payload::<bool>(payload) })
+                .await;
             let _ = view.update(cx, |this, cx| {
                 let Some(turn) = this.live.turns.get_mut(&id) else {
                     return;

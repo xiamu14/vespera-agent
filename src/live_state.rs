@@ -1,23 +1,27 @@
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     time::{Duration, Instant},
 };
 
 #[derive(Default)]
 pub struct LiveChat {
     pub turns: HashMap<String, Turn>,
+    pub tasks: HashMap<String, crate::background_tasks::BackgroundTasks>,
     pub attachments: HashMap<String, Vec<String>>,
+    pub model_errors: HashMap<String, String>,
 }
 
 pub struct Turn {
     pub parts: Vec<Value>,
     pub running: bool,
     pub stopping: bool,
+    pub(crate) send_after_stop: bool,
     pub(crate) started: bool,
     pub answering: bool,
     pub question: Option<Question>,
+    pub model_failure: Option<ModelFailure>,
     pub model: Option<String>,
     pub context_used: Option<f64>,
     pub llm_started: Option<Instant>,
@@ -25,6 +29,13 @@ pub struct Turn {
     paused: Duration,
     response: Option<(u64, usize)>,
     pub(crate) run_id: Option<String>,
+    run_ids: HashSet<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ModelFailure {
+    pub token: String,
+    pub message: String,
 }
 
 #[derive(Clone, Deserialize)]
@@ -47,6 +58,26 @@ pub struct OptionLabel {
 }
 
 impl Turn {
+    pub(crate) fn bind_run(&mut self, id: &str) {
+        self.run_id = Some(id.to_owned());
+        self.run_ids.insert(id.to_owned());
+    }
+
+    pub(crate) fn owns_message(&self, message: &crate::chat_data::Message) -> bool {
+        message
+            .run_id
+            .as_deref()
+            .is_some_and(|run_id| self.run_ids.contains(run_id))
+    }
+
+    pub(crate) fn saved_in(&self, history: &[crate::chat_data::Message]) -> bool {
+        self.run_id.as_deref().is_some_and(|run_id| {
+            history
+                .iter()
+                .any(|message| message.run_id.as_deref() == Some(run_id))
+        })
+    }
+
     pub(crate) fn new(prompt: &str, files: &[String]) -> Self {
         let content = files.iter().fold(prompt.to_owned(), |mut text, path| {
             if !text.is_empty() {
@@ -62,9 +93,11 @@ impl Turn {
             ],
             running: true,
             stopping: false,
+            send_after_stop: false,
             started: false,
             answering: false,
             question: None,
+            model_failure: None,
             model: None,
             context_used: None,
             llm_started: None,
@@ -72,6 +105,7 @@ impl Turn {
             paused: Duration::ZERO,
             response: None,
             run_id: None,
+            run_ids: HashSet::new(),
         }
     }
 
@@ -89,7 +123,37 @@ impl Turn {
         self.running && self.paused_at.is_none()
     }
 
+    pub(crate) fn composer_busy(&self) -> bool {
+        self.running && self.model_failure.is_none()
+    }
+
     pub(crate) fn event(&mut self, event: Value) {
+        if event["type"] == "model_failure" {
+            if let Ok(failure) = serde_json::from_value::<ModelFailure>(event) {
+                self.model_failure = Some(failure);
+                self.paused_at.get_or_insert_with(Instant::now);
+            }
+            return;
+        }
+        if event["type"] == "model_retrying" {
+            if self
+                .model_failure
+                .as_ref()
+                .is_some_and(|failure| event["token"] == failure.token)
+            {
+                self.model_failure = None;
+                if let Some(start) = self.paused_at.take() {
+                    self.paused += start.elapsed();
+                }
+            }
+            return;
+        }
+        if event["type"] == "run_started" {
+            if let Some(id) = event["run_id"].as_str() {
+                self.bind_run(id);
+            }
+            return;
+        }
         if event["type"] == "user_wait_finished" {
             if let Some(start) = self.paused_at.take() {
                 self.paused += start.elapsed();
@@ -110,15 +174,11 @@ impl Turn {
             }
             return;
         }
-        if event["type"] == "delegation" {
-            self.delegation(&event["event"]["task"]);
-            return;
-        }
         if event["type"] != "agent" {
             return;
         }
         if let Some(id) = event["run_id"].as_str() {
-            self.run_id = Some(id.to_owned());
+            self.bind_run(id);
         }
         if let Some(model) = event["model"].as_str() {
             self.model = Some(model.to_owned());
@@ -157,39 +217,6 @@ impl Turn {
             _ => {}
         }
     }
-
-    fn delegation(&mut self, task: &Value) {
-        let Some(id) = task["id"].as_str() else {
-            return;
-        };
-        let key = format!("delegation-{id}");
-        let has_call = self
-            .parts
-            .iter()
-            .any(|part| part["tool_call_id"] == key && part["part_kind"] == "tool-call");
-        if !has_call {
-            self.parts
-                .push(json!({"part_kind":"tool-call", "tool_call_id":key,
-                "tool_name":task["agent_name"], "args":{"query":task["prompt"]}}));
-        }
-        if task["status"] == "finished" {
-            let outcome = match task["outcome"].as_str() {
-                Some("ok") => "success",
-                Some("cancelled") => "interrupted",
-                _ => "failed",
-            };
-            let part = json!({"part_kind":"tool-return","tool_call_id":key,"outcome":outcome,"content":task["output"]});
-            if let Some(old) = self
-                .parts
-                .iter_mut()
-                .find(|old| old["tool_call_id"] == key && old["part_kind"] == "tool-return")
-            {
-                *old = part;
-            } else {
-                self.parts.push(part);
-            }
-        }
-    }
 }
 
 pub fn filename(path: &str) -> &str {
@@ -202,7 +229,75 @@ pub fn filename(path: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::Turn;
+    use crate::chat_data::Message;
     use serde_json::json;
+
+    #[test]
+    fn model_failure_pauses_timer_until_matching_retry() {
+        let mut turn = Turn::new("继续", &[]);
+        assert!(turn.composer_busy());
+        turn.event(json!({"type":"model_failure", "token":"current", "message":"HTTP 403"}));
+        assert!(!turn.composer_busy());
+        assert!(!turn.timer_running());
+        turn.event(json!({"type":"model_retrying", "token":"stale"}));
+        assert!(turn.model_failure.is_some());
+        assert!(!turn.composer_busy());
+        turn.event(json!({"type":"model_retrying", "token":"current"}));
+        assert!(turn.model_failure.is_none());
+        assert!(turn.timer_running());
+        assert!(turn.composer_busy());
+        assert_eq!(turn.parts.len(), 1);
+    }
+
+    #[test]
+    fn early_run_identity_reconciles_a_user_only_failed_snapshot() {
+        let mut turn = Turn::new("继续", &[]);
+        turn.bind_run("new-run");
+        assert_eq!(turn.run_id.as_deref(), Some("new-run"));
+        assert!(turn.llm_started.is_none());
+        let older = Message {
+            run_id: Some("old-run".into()),
+            parts: vec![json!({"part_kind":"user-prompt", "content":"继续"})],
+        };
+        let saved = Message {
+            run_id: Some("new-run".into()),
+            parts: vec![json!({"part_kind":"user-prompt", "content":"继续"})],
+        };
+        assert!(!turn.saved_in(std::slice::from_ref(&older)));
+        assert!(turn.saved_in(std::slice::from_ref(&saved)));
+        assert!(!turn.owns_message(&older));
+        assert!(turn.owns_message(&saved));
+        let history = [older, saved];
+        assert_eq!(
+            history
+                .iter()
+                .filter(|message| !turn.owns_message(message))
+                .count()
+                + turn.parts.len(),
+            2
+        );
+        turn.running = false;
+        assert!(turn.saved_in(&history));
+    }
+
+    #[test]
+    fn followup_runs_keep_all_streamed_message_owners() {
+        let mut turn = Turn::new("start", &[]);
+        turn.event(json!({"type":"run_started", "run_id":"first"}));
+        turn.event(json!({"type":"run_started", "run_id":"followup"}));
+        let first = Message {
+            run_id: Some("first".into()),
+            parts: vec![],
+        };
+        assert!(turn.owns_message(&first));
+        assert!(!turn.saved_in(std::slice::from_ref(&first)));
+        let followup = Message {
+            run_id: Some("followup".into()),
+            parts: vec![],
+        };
+        assert!(turn.owns_message(&followup));
+        assert!(turn.saved_in(&[first, followup]));
+    }
 
     #[test]
     fn user_wait_freezes_then_resumes_elapsed_time() {

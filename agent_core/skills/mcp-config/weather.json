@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "weather": {
+      "url": "http://127.0.0.1:8000/mcp",
+      "allowed_tools": ["get_forecast", "get_alerts"],
+      "defer_loading": true
+    }
+  },
+  "network": {
+    "allowed_origins": ["http://127.0.0.1:8000"],
+    "allow_private_origins": ["http://127.0.0.1:8000"],
+    "connect_timeout": 5,
+    "init_timeout": 5,
+    "read_timeout": 30,
+    "call_timeout": 60,
+    "connect_retries": 1
+  }
+}

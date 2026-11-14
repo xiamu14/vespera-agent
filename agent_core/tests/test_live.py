@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -11,7 +12,7 @@ from vespera_agent.attachments import load_attachments
 from vespera_agent.core import first_sentence
 
 
-RESOURCES = Path(__file__).resolve().parents[3] / "coder-cli"
+RESOURCES = Path(__file__).resolve().parents[1]
 
 
 class LiveTests(unittest.IsolatedAsyncioTestCase):
@@ -121,7 +122,7 @@ class LiveTests(unittest.IsolatedAsyncioTestCase):
                 store = FileStore(".agent-memory", workspace=LocalWorkspaceBackend(project))
                 await store.write("main/MEMORY.md", "project memory", expected_version=None)
                 detail = await core.inspect(cid)
-                self.assertEqual(detail["artifacts"][0]["path"], "result.txt")
+                self.assertEqual(detail["deliveries"][0]["items"][0]["path"], "result.txt")
                 self.assertTrue(any(entry["name"] == "result.txt" for entry in detail["directory"]))
                 self.assertIn("project memory", detail["project_memory"])
             finally:
@@ -139,3 +140,96 @@ class LiveTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(detail["today_cost"], 0.0)
             self.assertEqual(detail["total_cost"], 0.0)
             self.assertIsNone(core._runtime)
+
+    async def test_delivery_survives_reopen_with_shell_changes_commit_and_media(self):
+        import subprocess
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / "project"
+            project.mkdir()
+            def git(*args):
+                subprocess.run(["/usr/bin/git", "-C", str(project), *args], check=True, capture_output=True)
+            git("init", "-q")
+            git("config", "user.name", "Delivery Test")
+            git("config", "user.email", "delivery@example.invalid")
+            git("config", "commit.gpgsign", "false")
+            (project / "notes.txt").write_text("original")
+            git("add", "notes.txt")
+            git("commit", "-qm", "baseline")
+            (project / "notes.txt").write_text("preexisting dirty change")
+
+            commands = [
+                "printf updated > notes.txt && printf media > demo.wav",
+                "git add notes.txt && git commit -m 'Update notes'",
+            ]
+            async def stream(messages, info):
+                count = sum(isinstance(part, ToolReturnPart) and part.tool_name == "shell"
+                            for message in messages for part in message.parts)
+                if count < len(commands):
+                    yield {0: DeltaToolCall(name="shell", json_args=json.dumps({"command": commands[count]}))}
+                else:
+                    yield "Done"
+            model = FunctionModel(stream_function=stream)
+            core = AgentCore(root / "data", RESOURCES, model=model)
+            cid = core.create(str(project))["conversation_id"]
+            def emit(event):
+                if event["type"] == "question":
+                    core.answer_question(cid, event["question_id"], ["本次允许"], None)
+            try:
+                result = await asyncio.wait_for(core.send(cid, "整理笔记并提交", emit), 25)
+                self.assertEqual(result["output"], "Done")
+            finally:
+                await core.close(cid)
+            reopened = AgentCore(root / "data", RESOURCES, model=model)
+            groups = (await reopened.inspect(cid))["deliveries"]
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0]["title"], "整理笔记并提交")
+            items = groups[0]["items"]
+            self.assertTrue(any(item["path"] == "notes.txt" and item["action"] == "edit" and item["observed"]
+                                for item in items), items)
+            self.assertTrue(any(item["kind"] == "commit" and item["title"] == "Update notes"
+                                for item in items), items)
+            media = next(item for item in items if item["kind"] == "audio")
+            self.assertEqual(media["local_path"], str(project / "demo.wav"))
+            (project / "demo.wav").unlink()
+            (project / "demo.wav").symlink_to(root / "external.wav")
+            media = next(item for item in (await reopened.inspect(cid))["deliveries"][0]["items"]
+                         if item["kind"] == "audio")
+            self.assertIsNone(media["local_path"])
+
+    def test_delivery_changes_include_rename_and_delete_without_following_symlinks(self):
+        from vespera_agent.delivery import changes, snapshot
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "rename.txt").write_text("move me")
+            (root / "remove.txt").write_text("remove me")
+            before = snapshot(root)
+            (root / "rename.txt").rename(root / "renamed.txt")
+            (root / "remove.txt").unlink()
+            (root / "link.txt").symlink_to(root / "renamed.txt")
+            self.assertEqual(list(changes(before, snapshot(root))), [
+                ("renamed.txt", "rename", "rename.txt"), ("remove.txt", "delete", None),
+            ])
+
+    def test_delivery_accepts_local_mcp_resources_and_retains_legacy_writes(self):
+        from pydantic_ai.mcp import ResourceLink
+        from pydantic_ai.messages import ModelRequest
+        from vespera_agent.delivery import delivery_groups, media_outputs
+
+        outputs = {"outputs": [
+            ResourceLink(name="image", uri="file:///tmp/cover%20image.png"),
+            {"file_path": "demo.mp4"}, "https://example.invalid/remote.wav",
+        ]}
+        self.assertEqual(list(media_outputs(outputs)), ["/tmp/cover image.png", "demo.mp4"])
+        with TemporaryDirectory() as directory:
+            core = AgentCore(Path(directory), RESOURCES)
+            cid = core.create()["conversation_id"]
+            call = ToolCallPart("write_file", {"path": "old.txt"}, tool_call_id="write")
+            result = ToolReturnPart("write_file", "done", tool_call_id="write")
+            history = [ModelResponse(parts=[call], run_id="run"), ModelRequest(parts=[result], run_id="run")]
+            groups = delivery_groups(core.sessions, cid, history, [])
+            self.assertEqual(groups[0]["items"], [
+                {"path": "old.txt", "kind": "file", "action": "write_file"},
+            ])

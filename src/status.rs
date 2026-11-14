@@ -1,3 +1,4 @@
+use crate::inspector_collapse::CollapsibleSection;
 use crate::masked_scroll::MaskedScroll;
 use crate::theme::*;
 use gpui_kit::{base::Progress, *};
@@ -10,22 +11,26 @@ fn dot_alpha(index: usize, count: usize) -> f32 {
     }
 }
 
-fn timeline(history: &[(&'static str, &'static str)]) -> Div {
-    inspector_section(label("时间线", 16.)).child(column().gap(px(14.)).children(
-        history.iter().enumerate().map(|(index, &(time, message))| {
-            row()
-                .w_full()
-                .h(px(26.))
-                .flex_shrink_0()
-                .gap(px(12.))
-                .child(timeline_time(time, dot_alpha(index, history.len())))
-                .child(label(message, 16.).min_w_0().truncate())
-        }),
-    ))
+fn timeline(history: &[(&'static str, &'static str)]) -> CollapsibleSection {
+    CollapsibleSection::new(
+        "timeline-toggle",
+        "时间线",
+        column()
+            .gap(px(14.))
+            .children(history.iter().enumerate().map(|(index, &(time, message))| {
+                row()
+                    .w_full()
+                    .h(px(26.))
+                    .flex_shrink_0()
+                    .gap(px(12.))
+                    .child(timeline_time(time, dot_alpha(index, history.len())))
+                    .child(label(message, 16.).min_w_0().truncate())
+            })),
+    )
 }
 
 const FILES: [(&str, usize, bool); 12] = [
-    ("coder-cli", 0, true),
+    ("agent-core", 0, true),
     ("agent", 1, true),
     ("runtime.py", 2, false),
     ("roles.py", 2, false),
@@ -108,8 +113,8 @@ fn context_section(model: impl Into<SharedString>, used: Option<f64>, cost: Opti
                             let mut amount_font = body_font();
                             amount_font.weight = FontWeight::SEMIBOLD;
                             row()
-                                .gap(px(4.))
-                                .child(muted("$", 14.).font(emphasis_font()))
+                                .gap(px(2.))
+                                .child(muted("$", 14.).font(amount_font.clone()))
                                 .child(muted(format!("{cost:.2}"), 16.).font(amount_font))
                         }
                         None => muted("—", 14.),
@@ -303,6 +308,12 @@ pub fn live(
                 .then(|| muted("目录内容已截断", 12.)),
         );
     let context = context_section(model, used, cost);
+    let tasks = app
+        .chats
+        .as_ref()
+        .and_then(|chats| chats.selected.as_ref())
+        .and_then(|id| app.live.tasks.get(id))
+        .and_then(crate::background_tasks::BackgroundTasks::section);
     column()
         .w_full()
         .flex_1()
@@ -311,7 +322,12 @@ pub fn live(
         .child(MaskedScroll::new(
             "status-content",
             64.,
-            column().w_full().gap(px(20.)).child(recent).child(files),
+            column()
+                .w_full()
+                .gap(px(20.))
+                .children(tasks)
+                .child(recent)
+                .child(files),
         ))
         .child(context)
 }

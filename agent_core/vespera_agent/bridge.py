@@ -9,16 +9,21 @@ import sqlite3
 import httpx
 import httpx2
 from threading import Thread
+from uuid import uuid4
 
 from dotenv import load_dotenv
-from pydantic_ai.exceptions import AgentRunError, UserError
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import AgentRunError, ModelAPIError, UserError
+from pydantic_ai.models.instrumented import InstrumentationSettings
 
 from agent.conversation import error_message
+from integrations.telemetry import instrumentation
 from storage.execution_lock import ExecutionBusyError
 
 from .core import AgentCore, CoreBusyError
 from .sessions import ConversationNotFound
 from .inspector import list_directory
+from .model_failure import model_error_text
 
 
 EXPECTED_ERRORS = (
@@ -33,6 +38,8 @@ class Bridge:
         tools = Path(sysconfig.get_path("purelib")) / "bin"
         os.environ["PATH"] = os.pathsep.join((str(tools), os.environ.get("PATH", os.defpath)))
         load_dotenv(Path(data) / ".env")
+        if os.getenv("LOGFIRE_TOKEN"):
+            Agent.instrument_all(InstrumentationSettings(**instrumentation(service_name="ani-bot")))
         self.core = AgentCore(Path(data), Path(resources))
         self.jobs = {}
         self.events = {}
@@ -73,6 +80,11 @@ class Bridge:
             raise ValueError("conversation_id is required")
         if command == "open":
             return await self.core.open(conversation_id)
+        if command == "composer_choices":
+            query = request.get("query")
+            if query is not None and not isinstance(query, str):
+                raise ValueError("query must be text")
+            return await self.core.composer_choices(conversation_id, query)
         if command == "inspect":
             return await self.core.inspect(conversation_id)
         if command == "directory":
@@ -111,12 +123,15 @@ class Bridge:
             if not prompt.strip() and not paths:
                 raise ValueError("Message cannot be empty")
             events = self.events.setdefault(conversation_id, [])
+            run_id = uuid4().hex
             self.jobs[conversation_id] = asyncio.create_task(
-                self.core.send(conversation_id, prompt, events.append, paths=paths),
+                self.core.send(conversation_id, prompt, events.append, paths=paths, run_id=run_id),
             )
-            return None
+            return {"run_id": run_id}
         if command == "poll":
             return self._poll(conversation_id)
+        if command == "retry_model":
+            return self.core.retry_model(conversation_id, self._text(request, "token"))
         raise ValueError("Unknown command")
 
     def _poll(self, conversation_id):
@@ -135,6 +150,8 @@ class Bridge:
             else:
                 try:
                     result["result"] = task.result()
+                except ModelAPIError as exc:
+                    result["model_error"] = model_error_text(exc)
                 except EXPECTED_ERRORS as exc:
                     result["error"] = error_message(exc)
         return result

@@ -20,7 +20,7 @@ pub struct Inspection {
     pub today_cost: Option<f64>,
     pub total_cost: Option<f64>,
     pub daily_budget_usd: f64,
-    pub artifacts: Vec<Artifact>,
+    pub deliveries: Vec<DeliveryGroup>,
     pub user_memory: String,
     pub project_memory: String,
     pub binding_history: Vec<BindingChange>,
@@ -35,10 +35,24 @@ pub struct DirectoryEntry {
 }
 
 #[derive(Deserialize)]
-pub struct Artifact {
+pub struct DeliveryGroup {
+    pub title: Option<String>,
+    pub timestamp: String,
+    pub items: Vec<Delivery>,
+}
+
+#[derive(Deserialize)]
+pub struct Delivery {
     pub path: String,
     pub action: String,
-    pub timestamp: String,
+    pub kind: String,
+    pub title: Option<String>,
+    pub sha: Option<String>,
+    pub previous: Option<String>,
+    pub mime: Option<String>,
+    pub local_path: Option<String>,
+    #[serde(default)]
+    pub observed: bool,
 }
 
 #[derive(Deserialize)]

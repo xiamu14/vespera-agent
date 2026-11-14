@@ -1,4 +1,7 @@
-use crate::{Vespera, chat_state::Chats, history_cards::text, live_state::Turn, theme::*};
+use crate::{
+    Vespera, chat_state::Chats, history_cards::text, inspector_collapse::CollapsibleSection,
+    live_state::Turn, theme::*,
+};
 use gpui_kit::{base::Button, *};
 use std::collections::HashMap;
 
@@ -98,13 +101,15 @@ mod tests {
     }
 }
 
-pub fn render(app: &Vespera, cx: &Context<Vespera>) -> Div {
+pub fn render(app: &Vespera, cx: &Context<Vespera>) -> CollapsibleSection {
     let rows = app
         .chats
         .as_ref()
         .map(|chats| entries(chats, app.selected_turn()))
         .unwrap_or_default();
-    inspector_section(label("时间线", 16.)).child(
+    CollapsibleSection::new(
+        "timeline-toggle",
+        "时间线",
         column()
             .gap(px(6.))
             .children(
@@ -122,7 +127,7 @@ pub fn render(app: &Vespera, cx: &Context<Vespera>) -> Div {
                             .rounded(limited_radius(CONTROL_RADIUS, 32.))
                             .bg(rgb(if active { FIELD } else { BACKGROUND }))
                             .child(timeline_time(time, if active { 1. } else { 0.65 }))
-                            .child(label(message, 14.).min_w_0().truncate())
+                            .child(crate::message_references::summary(&message))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if let Some(y) = this.timeline.anchors.get(&index) {
                                     this.timeline

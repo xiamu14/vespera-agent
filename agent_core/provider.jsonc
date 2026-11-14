@@ -1,0 +1,36 @@
+{
+  // Model keys are local references. model_name overrides the ID sent to the provider.
+  "default_model": "glm-5.3-flash-event",
+  "model_tiers": {
+    "low": "glm-5.3-flash-event",
+    "medium": "gpt-6.1-sol",
+    "high": "claude-opus-5.5"
+  },
+  "models": {
+    "jev": {
+      "provider": "openrouter",
+      "protocol": "decisions",
+      "model_name": "typesafe/jev-1.13",
+      "timeout": 10
+    },
+    "glm-5.3-flash-event": { // Low
+      "provider": "openai",
+      "model_name":"GLM-5.3-Flash-Event",
+      "context_window": 1048576 // 1M
+    },
+    "claude-opus-5.5": { // High
+      "provider": "openrouter",
+      "model_name": "anthropic/claude-opus-5.5",
+      "protocol": "anthropic",
+      "context_window": 1048576 // 1M
+
+    }
+    ,
+    "gpt-6.1-sol": { // Medium
+      "provider": "openrouter",
+      "model_name": "openai/gpt-6.1-sol",
+      "protocol": "openai",
+      "context_window": 1048576 // 1.1M
+    }
+  }
+}

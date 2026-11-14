@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 from itertools import islice
 
-from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.messages import ModelResponse, UserPromptPart
 from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness.memory import FileStore
 from pydantic_ai_harness.step_persistence import SqliteStepStore
@@ -14,6 +14,7 @@ from agent.roles import ROLES
 from integrations.provider import load_provider_config
 from storage.sessions import load_session_history
 from .config import daily_budget_usd
+from .delivery import delivery_groups
 
 
 def user_messages(history):
@@ -54,22 +55,6 @@ def directory_tree(root):
     return entries, truncated
 
 
-def artifacts(history):
-    writes = {"write_file", "edit_file", "create_directory"}
-    calls = {}
-    entries = {}
-    for message in history:
-        for part in message.parts:
-            if isinstance(part, ToolCallPart) and part.tool_name in writes:
-                calls[part.tool_call_id] = part
-            elif isinstance(part, ToolReturnPart) and part.outcome == "success" and part.tool_call_id in calls:
-                call = calls.pop(part.tool_call_id)
-                path = call.args_as_dict().get("path")
-                if isinstance(path, str):
-                    entries[path] = {"path": path, "action": call.tool_name, "timestamp": part.timestamp.isoformat()}
-    return list(reversed(entries.values()))
-
-
 def configured_model(core):
     if core.model is not None:
         return core.model.model_name, core.model.context_window
@@ -108,11 +93,11 @@ async def usage_cost(store, runs, date=None):
             if date is not None and response.timestamp.astimezone().date() != date:
                 continue
             if not response.model_name:
-                return None
+                continue
             try:
                 total += response.cost().total_price
             except (ValueError, LookupError):
-                return None
+                continue
             priced = True
     return float(total) if priced else None if active_today else 0.0
 
@@ -173,7 +158,7 @@ async def inspection(core, conversation_id):
         "today_cost": await usage_cost(store, runs, datetime.now().astimezone().date()),
         "total_cost": await usage_cost(store, runs),
         "daily_budget_usd": daily_budget_usd(),
-        "artifacts": artifacts(artifact_history),
+        "deliveries": await asyncio.to_thread(delivery_groups, sessions, conversation_id, artifact_history, runs),
         "user_memory": memory if work_path is None else "",
         "project_memory": memory if work_path else "",
         "binding_history": sessions.memory(conversation_id),

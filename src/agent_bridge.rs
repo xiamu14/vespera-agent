@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use anyhow::{Result, anyhow, ensure};
 
 type Initialize =
-    unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char) -> c_int;
+    unsafe extern "C" fn(*const c_char, *const c_char, *const c_char) -> c_int;
 type Request = unsafe extern "C" fn(*const c_char) -> *mut c_char;
 type Free = unsafe extern "C" fn(*mut c_char);
 
@@ -68,7 +68,6 @@ impl AgentBridge {
         let library = path(&contents.join("Frameworks/libvespera_agent.dylib"))?;
         let home = path(&resources.join("python"))?;
         let core = path(&resources.join("agent_core"))?;
-        let source = path(&resources.join("coder-cli"))?;
         let data = path(data)?;
         // CPython and its extension modules remain loaded for the lifetime of the host.
         let handle = unsafe { dlopen(library.as_ptr(), 2 | 8) }; // RTLD_NOW | RTLD_GLOBAL on macOS.
@@ -91,7 +90,7 @@ impl AgentBridge {
         let request: Request = unsafe { std::mem::transmute(symbol(c"vespera_agent_request")?) };
         let free: Free = unsafe { std::mem::transmute(symbol(c"vespera_agent_free")?) };
         let status =
-            unsafe { initialize(home.as_ptr(), core.as_ptr(), source.as_ptr(), data.as_ptr()) };
+            unsafe { initialize(home.as_ptr(), core.as_ptr(), data.as_ptr()) };
         ensure!(status == 0, "Could not initialize the bundled Agent Core");
         Ok(Self { request, free })
     }

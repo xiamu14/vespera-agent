@@ -3,7 +3,8 @@
 - GPUI Kit 0.9.0: https://github.com/longbridge/gpui-kit — Apache-2.0.
 - GPUI snapshot crates: https://github.com/zed-industries/zed — see each crate's included license.
 - Hugeicons Free Stroke Rounded SVGs: https://hugeicons.com/icons/stroke-rounded.
-  Downloaded from the Free collection through the user's Hugeicons session.
+  Downloaded from the Free collection. ChatBotIcon, ToolCaseIcon, and ComputerActivityIcon use
+  `@hugeicons/core-free-icons` 4.2.1 (MIT).
 - App icon and attachment image: supplied by the user in the Ani Bot Sketch document.
 - System fonts are loaded from macOS and are not redistributed.
 

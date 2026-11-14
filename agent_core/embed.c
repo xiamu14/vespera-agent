@@ -15,8 +15,7 @@ static int prepend_path(const char *path) {
     return result;
 }
 
-static int initialize(const char *home, const char *core, const char *source,
-                      const char *data) {
+static int initialize(const char *home, const char *core, const char *data) {
     PyConfig config;
     PyConfig_InitIsolatedConfig(&config);
     config.write_bytecode = 0;
@@ -26,12 +25,12 @@ static int initialize(const char *home, const char *core, const char *source,
     PyConfig_Clear(&config);
     if (PyStatus_Exception(status)) return -1;
 
-    if (prepend_path(source) == 0 && prepend_path(core) == 0) {
+    if (prepend_path(core) == 0) {
         PyObject *module = PyImport_ImportModule("vespera_agent.bridge");
         if (module != NULL) {
             PyObject *type = PyObject_GetAttrString(module, "Bridge");
             if (type != NULL) {
-                bridge = PyObject_CallFunction(type, "ss", data, source);
+                bridge = PyObject_CallFunction(type, "ss", data, core);
                 Py_DECREF(type);
             }
             Py_DECREF(module);
@@ -42,7 +41,7 @@ static int initialize(const char *home, const char *core, const char *source,
     return bridge == NULL ? -1 : 0;
 }
 
-int vespera_agent_initialize(const char *home, const char *core, const char *source,
+int vespera_agent_initialize(const char *home, const char *core,
                              const char *data) {
     static int status = -1;
     static int attempted;
@@ -50,7 +49,7 @@ int vespera_agent_initialize(const char *home, const char *core, const char *sou
     if (!attempted) {
         attempted = 1;
         data_directory = strdup(data);
-        if (data_directory != NULL) status = initialize(home, core, source, data);
+        if (data_directory != NULL) status = initialize(home, core, data);
     }
     int result = data_directory != NULL && strcmp(data_directory, data) == 0 ? status : -1;
     pthread_mutex_unlock(&initialization);

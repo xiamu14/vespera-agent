@@ -24,4 +24,8 @@ class CostTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await usage_cost(store, runs, now.date()), 0.11)
         with patch.object(ModelResponse, "cost", side_effect=ValueError("unknown price")):
             self.assertIsNone(await usage_cost(store, runs))
+        with patch.object(ModelResponse, "cost", side_effect=[
+            LookupError("unknown price"), SimpleNamespace(total_price=Decimal("0.11")),
+        ]):
+            self.assertEqual(await usage_cost(store, runs), 0.11)
         self.assertEqual(await usage_cost(store, []), 0.0)

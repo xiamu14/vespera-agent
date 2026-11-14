@@ -141,14 +141,14 @@ impl RenderOnce for Tools {
             .nth(1)
             .map(|entry| entry.summary());
         chat_card()
-            .px(px(15.))
-            .py(px(11.))
+            .px(CHAT_SECTION_PADDING_X)
+            .py(CHAT_SECTION_PADDING_Y)
             .gap(px(6.))
             .child(
                 Button::new(self.id.clone())
                     .accessibility_label("展开或收起工具调用")
                     .w_full()
-                    .h(px(32.))
+                    .h(CHAT_SECTION_HEADER_HEIGHT)
                     .justify_start()
                     .items_center()
                     .gap(px(8.))

@@ -10,7 +10,7 @@ from pydantic_ai.models.function import FunctionModel
 from vespera_agent import AgentCore
 
 
-RESOURCES = Path(__file__).resolve().parents[3] / "coder-cli"
+RESOURCES = Path(__file__).resolve().parents[1]
 
 
 class AgentCoreTests(unittest.IsolatedAsyncioTestCase):

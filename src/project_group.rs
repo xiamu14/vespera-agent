@@ -99,7 +99,7 @@ impl RenderOnce for ProjectGroup {
                     .overflow_hidden()
                     .flex_shrink_0()
                     .min_h_0()
-                    .when_some(height, |view, height| {
+                    .when_some(height.filter(|_| progress < 1.), |view, height| {
                         view.h(px((height + ITEM_TOP_PADDING) * progress))
                     })
                     .child(

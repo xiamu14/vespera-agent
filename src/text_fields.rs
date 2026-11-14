@@ -19,6 +19,15 @@ pub(crate) fn path_reference(path: &str, folder: bool) -> InlineToken {
         .with_label(name.to_owned())
 }
 
+pub(crate) fn attachment_reference(key: &str, label: &str) -> InlineToken {
+    let quoted = serde_json::to_string(key).expect("a string is serializable");
+    InlineToken::new(
+        format!("attachment:{key}"),
+        format!("［附件引用：{quoted}］"),
+    )
+    .with_label(label.to_owned())
+}
+
 fn caret_scale(seconds: f32) -> f32 {
     let phase = seconds.rem_euclid(1.);
     if phase < 0.7 {
@@ -241,19 +250,27 @@ pub fn draft_field(state: &Entity<TextareaState>) -> Div {
 }
 
 pub(crate) fn reference_label(token: &gpui_kit::base::input::InlineTokenContext) -> Div {
-    label(token.token().label().clone(), 14.)
+    reference_badge(token.token(), token.is_selected())
+}
+
+pub(crate) fn reference_badge(token: &InlineToken, selected: bool) -> Div {
+    let command_icon = token
+        .id()
+        .strip_prefix("command:")
+        .and_then(|id| id.split_once(':'))
+        .map(|(glyph, _)| glyph);
+    row()
+        .gap(px(4.))
+        .children(command_icon.map(|glyph| icon(glyph, 14., 0xbb731c)))
+        .child(label(token.label().clone(), 14.))
         .px(px(7.))
         .py(px(2.))
-        .rounded(px(if token.is_selected() {
+        .rounded(px(if selected {
             SELECTION_RADIUS
         } else {
             DETAIL_RADIUS
         }))
-        .bg(rgb(if token.is_selected() {
-            PRIMARY_WASH
-        } else {
-            0xfff9e9
-        }))
+        .bg(rgb(if selected { PRIMARY_WASH } else { 0xfff9e9 }))
         .text_color(rgb(0xbb731c))
 }
 

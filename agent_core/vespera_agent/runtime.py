@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext, UsageLimits
-from pydantic_ai.capabilities import DynamicCapability, HandleDeferredToolCalls, SelectModel, WebFetch
+from pydantic_ai.capabilities import DynamicCapability, HandleDeferredToolCalls, SelectModel
 from pydantic_ai_harness import AskUser, ConversationSearch, FileSystem, Planning, Skills
 from pydantic_ai_harness import StepPersistence, SummarizingCompaction
 from pydantic_ai_harness.coder import Coder
@@ -23,7 +23,10 @@ from integrations.provider import build_model, load_provider_config
 from tools.external_hooks import external_result_hooks, hook_config_path, load_hook_settings
 from tools.output_hooks import output_hooks
 from tools.review import review_diff
-from tools.web_tools import web_search
+from tools.web_tools import web_fetch, web_search
+
+from .delivery import DeliveryCapture
+from .sessions import Sessions
 
 
 COMMIT_WORKFLOW = """
@@ -59,8 +62,9 @@ async def project_context(ctx: RunContext[RunDeps]):
 
 
 class Runtime:
-    def __init__(self, database, resources, model=None):
-        self.database = database
+    def __init__(self, sessions: Sessions, resources, model=None):
+        database = self.database = sessions.database
+        self.delivery = DeliveryCapture(sessions)
         self.resources = resources
         self.store = SqliteStepStore(database=str(database))
         self.model = model
@@ -78,14 +82,14 @@ class Runtime:
             + ROLES["super"].instructions + COMMIT_WORKFLOW,
             capabilities=[
                 Coder(unrestricted_filesystem=True, repo_context=False, sub_agents=False),
-                WebFetch(native=False, local=True), output_hooks, self.skills,
+                output_hooks, self.skills, self.delivery,
                 DynamicCapability(self.persistence, id="root_persistence"),
                 ConversationSearch(SnapshotHistorySource(self.store), scope="conversation", max_matches=3),
                 SummarizingCompaction(max_messages=60, keep_messages=20),
                 WorkspaceMemory(FileStore(".agent-memory"), database=database, max_tokens=1000,
                                 max_search_results=3, injection_errors="raise"),
             ],
-            tools=[web_search],
+            tools=[web_fetch, web_search],
         )
         self.agent.instructions(name="project-context", on_change="rewrite")(project_context)
 
@@ -113,7 +117,7 @@ class Runtime:
         role = ROLES[name]
         capabilities = [
             DynamicCapability(RoleServices(runtime, name).for_run, id="role_services"),
-            DelegationPolicy(runtime, name), output_hooks,
+            DelegationPolicy(runtime, name), output_hooks, self.delivery,
             SummarizingCompaction(max_messages=60, keep_messages=20),
             SubAgents(include_self=True, max_depth=3, task_control=TaskControl(max_running_tasks=4)),
             SelectModel(lambda ctx: self.role_model(name)),
@@ -141,14 +145,13 @@ class WorkspaceServices:
         self.project = ProjectContext(root, database.parent / "project-context", database=database)
         self.mcp = MCPRegistry()
         self.delegations = runtime = Delegations(database, root, conversation_id)
-        self.permissions = permissions = ExecutionPermissions(root, runtime.broker, database, self.mcp.path)
-        permissions.allow_sandboxed_shell = True
+        self.permissions = permissions = ExecutionPermissions(root, runtime.broker, database, self.mcp.path,
+                                                      policy_id=ROLES["super"].policy_id)
         hook_path = hook_config_path()
         if hook_path is not None:
             permissions.forbidden += (hook_path,)
         self.mcp.authorize_stdio = permissions.authorize_stdio
         runtime.mcp_path = self.mcp.path
-        permissions.review_gate = runtime.check_deliverables
         plan = SqlitePlanStore(str(database), session=conversation_id)
         root_services = [
             AskUser(answerer=runtime.broker.ask), permissions, Planning(tools=["write_plan"], store=plan),

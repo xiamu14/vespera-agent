@@ -4,30 +4,38 @@ import re
 from collections.abc import Callable
 from contextlib import AsyncExitStack
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 from pydantic import TypeAdapter
-from pydantic_ai import UsageLimits
-from pydantic_ai.messages import AgentStreamEvent, ModelMessagesTypeAdapter, ToolCallPart
+from pydantic_ai import ModelRetry, UsageLimits
+from pydantic_ai.messages import (
+    AgentStreamEvent, ModelMessagesTypeAdapter, ModelRequest, ModelResponse, TextContent, TextPart,
+    ToolCallPart, UserPromptPart,
+)
 from pydantic_ai.workspaces import Workspace
 from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserRequest, AskUserResponse, check_response
-from pydantic_ai_harness.step_persistence import SqliteStepStore
-from pydantic_ai_harness.subagents import DelegationTaskEvent
+from pydantic_ai_harness.step_persistence import ContinuableSnapshot, RunRecord, SqliteStepStore
 
 from agent.conversation import _super_history
 from agent.interaction import Interaction
+from agent.roles import ROLES, role_request
 from agent.permissions.workspace import RestrictedBackend
 from storage.execution_lock import session_lease
 from storage.sessions import load_session_history, session_title
 
 from .attachments import load_attachments
+from .composer import literal_triggers, prompt_attachments, reference_choices, skill_catalog, slash_invocation
+from .delivery import TURN
 from .inspector import inspection, user_messages
+from .model_failure import ModelRequestRetry
 from .runtime import RunDeps, Runtime
 from .sessions import Binding, Sessions
 from .timing import active_seconds
+from .task_status import task_event
 
 
 STREAM_EVENT = TypeAdapter(AgentStreamEvent)
-TASK_EVENT = TypeAdapter(DelegationTaskEvent)
 
 
 def no_events(event):
@@ -74,12 +82,13 @@ class AgentCore:
         self._closing = set()
         self._interactions = {}
         self._questions = {}
+        self._model_retries = {}
         self._question_ids = count(1)
 
     @property
     def runtime(self):
         if self._runtime is None:
-            self._runtime = Runtime(self.sessions.database, self.resources, self.model)
+            self._runtime = Runtime(self.sessions, self.resources, self.model)
         return self._runtime
 
     def create(self, path: str | None = None):
@@ -222,6 +231,10 @@ class AgentCore:
     async def close(self, conversation_id: str):
         await self._stop(conversation_id)
 
+    def retry_model(self, conversation_id, token):
+        retry = self._model_retries.get(conversation_id)
+        return retry is not None and retry.confirm(token)
+
     def answer(self, conversation_id: str, text: str):
         services = self._services.get(conversation_id)
         if services is not None and services.delegations.broker.waiting is not None:
@@ -247,23 +260,34 @@ class AgentCore:
         future.set_result(answer)
         return True
 
-    async def send(self, conversation_id: str, prompt: str, emit: Callable = no_events, *, paths=()):
+    async def composer_choices(self, conversation_id, query=None):
+        binding = self.sessions.binding(conversation_id)
+        if query is not None:
+            history = await load_session_history(self.sessions.database, conversation_id)
+            return await asyncio.to_thread(reference_choices, history, query)
+        root = binding.path if binding else self.sessions.private_workspace(conversation_id)
+        if binding and (not root.is_dir() or not binding.matches(root.lstat())):
+            raise ValueError("项目目录不可用")
+        roles = [{"name": name, "description": role.description}
+                 for name, role in ROLES.items() if name != "super"]
+        skills = await skill_catalog(self.runtime, root)
+        return {"roles": roles, "skills": [{"name": name, "description": skill.description}
+                                         for name, skill in sorted(skills.items())]}
+
+    async def send(self, conversation_id: str, prompt: str, emit: Callable = no_events, *, paths=(), run_id=None):
         if not prompt.strip() and not paths:
             raise ValueError("Message cannot be empty")
         if conversation_id in self._running or conversation_id in self._closing:
             raise CoreBusyError("Conversation is busy")
-        task = asyncio.create_task(self._send(conversation_id, prompt, emit, paths))
+        task = asyncio.create_task(self._send(conversation_id, prompt, emit, paths, run_id or uuid4().hex))
         self._running[conversation_id] = task
         try:
             return await task
         finally:
             self._running.pop(conversation_id, None)
 
-    async def _send(self, conversation_id, prompt, emit, paths):
-        user_prompt = prompt
-        if paths:
-            attachments = await asyncio.to_thread(load_attachments, paths)
-            user_prompt = ([prompt] if prompt.strip() else []) + attachments
+    async def _send(self, conversation_id, prompt, emit, paths, run_id):
+        uploads = await asyncio.to_thread(load_attachments, paths) if paths else []
         database = self.sessions.database
         with session_lease(database, conversation_id):
             binding = await self._reconcile(conversation_id)
@@ -275,6 +299,20 @@ class AgentCore:
             if services is None:
                 services = self.runtime.workspace_services(root, conversation_id)
                 self._services[conversation_id] = services
+
+            history = await load_session_history(database, conversation_id)
+            attachments = prompt_attachments(prompt, paths, uploads, history)
+            text = literal_triggers(prompt)
+            user_prompt = [*([text] if text.strip() else []), *attachments] if attachments else text
+            role_prompt, skill, arguments = await slash_invocation(prompt, self.runtime, root)
+            role = role_request(role_prompt) if role_prompt else None
+            if role:
+                role = (role[0], literal_triggers(role[1]))
+            if role and attachments:
+                raise ValueError("角色任务支持历史文件路径引用。图片或 PDF 请发给 Super。")
+            if skill is not None:
+                skill_text = skill.render(literal_triggers(arguments))
+                user_prompt = [text, TextContent(skill_text, metadata={"origin": "ani-skill"}), *attachments]
 
             async def question(text):
                 pending = services.delegations.broker.waiting or interaction.waiting
@@ -297,10 +335,11 @@ class AgentCore:
                         await asyncio.to_thread(self.sessions.user_wait, run_id, question_id, finished=True)
                     emit({"type": "user_wait_finished", "question_id": question_id})
 
+            task_changed = asyncio.Event()
+
             async def observe(event):
-                emit({"type": "delegation", "event": TASK_EVENT.dump_python(
-                    event, mode="json", exclude={"task": {"messages"}},
-                )})
+                task_changed.set()
+                emit({"type": "delegation", "task": task_event(event)})
 
             async def events(ctx, stream):
                 async for event in stream:
@@ -308,8 +347,24 @@ class AgentCore:
                           "context_used": ctx.context_window_used, "model": ctx.model.model_name,
                           "event": STREAM_EVENT.dump_python(event, mode="json")})
 
-            history = await load_session_history(database, conversation_id)
+            async def save_role_results(records, messages, *, run, step):
+                outputs = [record.output.strip() for record in records if record.output.strip()]
+                if records and not outputs:
+                    outputs = ["角色任务已结束，未返回文本。"]
+                await self.runtime.store.save_snapshot(ContinuableSnapshot(
+                    conversation_id=conversation_id, run_id=run, step_index=step, messages=[
+                        *messages, *(ModelResponse(parts=[TextPart(output)], run_id=run,
+                                                   conversation_id=conversation_id) for output in outputs),
+                    ],
+                ))
+                for record in records:
+                    record.delivered = True
+                    await services.delegations.owner.save(record)
+                return "\n\n".join(outputs)
+
             interaction = StreamInteraction(emit)
+            retry = ModelRequestRetry(emit)
+            self._model_retries[conversation_id] = retry
             interaction.open(question)
             self._interactions[conversation_id] = interaction
             try:
@@ -318,18 +373,60 @@ class AgentCore:
                     backend = RestrictedBackend(root, services.permissions)
                     stack.callback(backend.close)
                     toolsets = await stack.enter_async_context(services.mcp.toolsets())
-                    with services.delegations.owner.bind():
+                    owner = services.delegations.owner
+                    with owner.bind():
+                        if role:
+                            await self.runtime.store.register_run(RunRecord(
+                                conversation_id=conversation_id, run_id=run_id,
+                                metadata={"title": first_sentence(prompt) or "", "workspace": str(root)},
+                            ))
+                            messages = [*history, ModelRequest(
+                                parts=[UserPromptPart(user_prompt)], conversation_id=conversation_id, run_id=run_id,
+                            )]
+                            await save_role_results([], messages, run=run_id, step=0)
+                            token = TURN.set((conversation_id, run_id, first_sentence(prompt) or ""))
+                            try:
+                                previous = set(owner.records)
+                                launcher = SimpleNamespace(agent=self.runtime.agent, permissions=services.permissions)
+                                try:
+                                    await services.delegations.start_role(launcher, *role)
+                                except ModelRetry as exc:
+                                    raise ValueError(str(exc)) from exc
+                                started = [record for key, record in owner.records.items() if key not in previous]
+                                while any(record.status == "running" for record in started):
+                                    task_changed.clear()
+                                    await task_changed.wait()
+                                reports = [record for record in started if record.status == "finished"]
+                                output = await save_role_results(reports, messages, run=run_id, step=1)
+                                return {"conversation_id": conversation_id, "run_id": run_id, "output": output}
+                            finally:
+                                TURN.reset(token)
+
+                        emit({"type": "run_started", "run_id": run_id})
                         result = await self.runtime.agent.run(
-                            user_prompt, conversation_id=conversation_id, message_history=_super_history(history),
-                            workspace=Workspace(backend), toolsets=toolsets,
-                            capabilities=[*services.capabilities, interaction, services.delegations.reports()],
+                            user_prompt, conversation_id=conversation_id, run_id=run_id,
+                            message_history=_super_history(history), workspace=Workspace(backend),
+                            toolsets=toolsets,
+                            capabilities=[*services.capabilities, interaction, retry, services.delegations.reports()],
                             deps=RunDeps(services.project, self.sessions.memory(conversation_id), first_sentence(prompt) or ""),
-                            event_stream_handler=events,
-                            usage_limits=UsageLimits(request_limit=50),
+                            event_stream_handler=events, usage_limits=UsageLimits(request_limit=50),
                         )
+
+                        while self.has_background_work(conversation_id):
+                            task_changed.clear()
+                            await task_changed.wait()
+                        pending_reports = owner.super_reports(conversation_id)
+                        if pending_reports:
+                            snapshot = await self.runtime.store.latest_snapshot(run_id=run_id)
+                            output = await save_role_results(
+                                pending_reports, result.all_messages(), run=run_id,
+                                step=snapshot.step_index + 1,
+                            )
+                            return {"conversation_id": conversation_id, "run_id": run_id, "output": output}
             finally:
                 interaction.close()
                 self._interactions.pop(conversation_id, None)
+                self._model_retries.pop(conversation_id, None)
                 pending = self._questions.get(conversation_id)
                 if pending and pending[2].done():
                     self._questions.pop(conversation_id, None)

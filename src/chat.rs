@@ -49,7 +49,7 @@ fn attachment() -> Div {
 fn composer(draft: &Entity<TextareaState>, app: &Vespera, cx: &Context<Vespera>) -> Div {
     let has_text = !draft.read(cx).value().trim().is_empty();
     let turn = app.selected_turn();
-    let running = turn.is_some_and(|turn| turn.running);
+    let running = turn.is_some_and(|turn| turn.composer_busy());
     let answering = running && turn.is_some_and(|turn| turn.question.is_some());
     let stopping = turn.is_some_and(|turn| turn.stopping || turn.answering);
     let ready = app
@@ -129,8 +129,12 @@ fn composer(draft: &Entity<TextareaState>, app: &Vespera, cx: &Context<Vespera>)
                                         .bg(rgb(0xffffff))
                                         .into_any_element()
                                 } else {
-                                    icon("composer-send", 20., if accent { 0xffffff } else { MUTED })
-                                        .into_any_element()
+                                    icon(
+                                        "composer-send",
+                                        20.,
+                                        if accent { 0xffffff } else { MUTED },
+                                    )
+                                    .into_any_element()
                                 })
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     if stop {
@@ -153,7 +157,7 @@ pub(crate) fn user_message(
         column()
             .relative()
             .w_auto()
-            .max_w(relative(0.75))
+            .max_w(px(width * 0.70))
             .min_w_0()
             .px(px(15.))
             .py(px(11.))
@@ -178,7 +182,7 @@ pub(crate) fn user_message(
             .child(crate::message_references::MessageReferences {
                 id: id.into(),
                 text: text.into(),
-                max_width: (width - 60.) * 0.75 - 30.,
+                max_width: width * 0.70 - 30.,
             }),
     )
 }
@@ -225,7 +229,7 @@ pub fn chat(
                         .child(assistant_message("answer", fixtures::ANSWER, width)),
                 )
         },
-        |chats| crate::chat_history::live_history(chats, app.selected_turn(), width, cx),
+        |chats| crate::chat_history::live_history(chats, &app.live, width, cx),
     );
     let scroll_id = chats
         .and_then(|chats| chats.selected.as_deref())
@@ -286,11 +290,13 @@ pub fn chat(
                 })),
         )
         .child(
-            div()
-                .w_full()
-                .px(px(30.))
-                .flex_shrink_0()
-                .child(composer(draft, app, cx)),
+            div().w_full().px(px(30.)).flex_shrink_0().child(
+                div()
+                    .relative()
+                    .w_full()
+                    .children(crate::composer_menu::menu(app, draft, cx))
+                    .child(composer(draft, app, cx)),
+            ),
         )
 }
 

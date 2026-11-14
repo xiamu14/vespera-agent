@@ -6,42 +6,102 @@ use crate::{
     chat_data::Summary,
     chat_state::{Chats, ListPhase},
 };
-use gpui_kit::base::input::InputState;
+use gpui_kit::base::{animation::ease_in_out_cubic, input::InputState};
 use gpui_kit::*;
+use std::time::{Duration, Instant};
 
 const SEARCH_GAP: f32 = 16.;
 const HEADER_HEIGHT: f32 = 36.;
 
-fn session(
+#[derive(IntoElement)]
+struct SessionRow {
     id: SharedString,
-    title: impl Into<SharedString>,
-    time: impl Into<SharedString>,
+    title: SharedString,
+    time: SharedString,
     active: bool,
-) -> Div {
-    const HEIGHT: f32 = 35.;
-    let content = row()
-        .w_full()
-        .h(px(if active { HEIGHT } else { 14. * 1.3 }))
-        .px(px(10.))
-        .gap(px(6.))
-        .justify_between()
-        .child(crate::sidebar_title::SidebarTitle {
-            id,
-            text: title.into(),
-            active,
-        })
-        .child(
-            label(time, 12.)
-                .text_color(rgb(0x999999))
-                .flex_shrink_0()
-                .whitespace_nowrap(),
+}
+
+const SESSION_TRANSITION: Duration = Duration::from_millis(200);
+
+struct SessionHeight {
+    active: bool,
+    from: f32,
+    started: Instant,
+}
+
+impl SessionHeight {
+    fn target(active: bool) -> f32 {
+        if active { 35. } else { 14. * 1.3 }
+    }
+
+    fn height(&self, now: Instant) -> f32 {
+        let elapsed = now.duration_since(self.started);
+        let progress = (elapsed.as_secs_f32() / SESSION_TRANSITION.as_secs_f32()).min(1.);
+        self.from + (Self::target(self.active) - self.from) * ease_in_out_cubic(progress)
+    }
+}
+
+impl RenderOnce for SessionRow {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let now = Instant::now();
+        let target = SessionHeight::target(self.active);
+        let state = window.use_keyed_state(
+            SharedString::from(format!("sidebar-session-height:{}", self.id)),
+            cx,
+            |_, _| SessionHeight {
+                active: self.active,
+                from: target,
+                started: now,
+            },
         );
-    if active {
-        content
-            .rounded(limited_radius(CONTROL_RADIUS, HEIGHT))
-            .bg(rgb(FIELD))
-    } else {
-        content
+        let reduce_motion = cx.reduce_motion();
+        if state.read(cx).active != self.active {
+            state.update(cx, |height, _| {
+                height.from = if reduce_motion {
+                    target
+                } else {
+                    height.height(now)
+                };
+                height.active = self.active;
+                height.started = now;
+            });
+        }
+        let motion = state.read(cx);
+        let height = if reduce_motion {
+            target
+        } else {
+            motion.height(now)
+        };
+        if !reduce_motion
+            && motion.from != target
+            && now.duration_since(motion.started) < SESSION_TRANSITION
+        {
+            window.request_animation_frame();
+        }
+
+        row()
+            .w_full()
+            .h(px(height))
+            .px(px(10.))
+            .gap(px(6.))
+            .justify_between()
+            .rounded(limited_radius(CONTROL_RADIUS, height))
+            .bg(if self.active {
+                rgb(FIELD).opacity(1.)
+            } else {
+                rgb(FIELD).opacity(0.)
+            })
+            .child(crate::sidebar_title::SidebarTitle {
+                id: self.id,
+                text: self.title,
+                active: self.active,
+            })
+            .child(
+                label(self.time, 12.)
+                    .text_color(rgb(0x999999))
+                    .flex_shrink_0()
+                    .whitespace_nowrap(),
+            )
     }
 }
 
@@ -113,7 +173,7 @@ pub fn sidebar(
                         .bg(rgb(PRIMARY_WASH))
                         .text_color(rgb(PRIMARY))
                         .child(icon("new-chat-plus", 15., PRIMARY))
-                        .child(label("新聊天", 16.))
+                        .child(label("新聊天", 16.).font(font("PingFang SC")))
                         .id("new-chat")
                         .debug_selector(|| "new-chat".into())
                         .on_click(new_chat),
@@ -142,7 +202,7 @@ fn preview_groups(query: &str) -> Div {
     column().gap(px(10.)).children(
         [
             (
-                "coder-cli",
+                "ani-bot",
                 true,
                 &[
                     ("修复会话恢复", "刚刚", true),
@@ -161,12 +221,12 @@ fn preview_groups(query: &str) -> Div {
                     name.contains(query) || title.to_lowercase().contains(query)
                 })
                 .map(|&(title, time, active)| {
-                    session(
-                        format!("preview:{name}:{title}").into(),
-                        title,
-                        time,
+                    div().child(SessionRow {
+                        id: format!("preview:{name}:{title}").into(),
+                        title: title.into(),
+                        time: time.into(),
                         active,
-                    )
+                    })
                 })
                 .collect();
             (!items.is_empty()).then_some(ProjectGroup {
@@ -199,12 +259,12 @@ fn live_groups(chats: &Chats, query: &str, cx: &Context<Vespera>) -> Div {
         let row = div().child(
             div()
                 .id(SharedString::from(item.conversation_id.clone()))
-                .child(session(
-                    item.conversation_id.clone().into(),
-                    item.title().into_owned(),
-                    activity(item.updated_at.as_deref()),
+                .child(SessionRow {
+                    id: item.conversation_id.clone().into(),
+                    title: item.title().into_owned().into(),
+                    time: activity(item.updated_at.as_deref()).into(),
                     active,
-                ))
+                })
                 .on_click(open),
         );
         if let Some((_, items)) = groups
@@ -266,5 +326,38 @@ fn activity(value: Option<&str>) -> String {
         0 => "今天".into(),
         1 => "昨天".into(),
         _ => time.format("%-m月%-d日").to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SESSION_TRANSITION, SessionHeight};
+    use std::time::Instant;
+
+    #[test]
+    fn session_height_can_reverse_mid_transition() {
+        let start = Instant::now();
+        let collapsed = SessionHeight::target(false);
+        let growing = SessionHeight {
+            active: true,
+            from: collapsed,
+            started: start,
+        };
+        assert_eq!(growing.height(start), collapsed);
+        assert_eq!(
+            growing.height(start + SESSION_TRANSITION),
+            SessionHeight::target(true)
+        );
+
+        let now = start + SESSION_TRANSITION / 2;
+        let from = growing.height(now);
+        assert!(from > collapsed && from < SessionHeight::target(true));
+        let shrinking = SessionHeight {
+            active: false,
+            from,
+            started: now,
+        };
+        assert_eq!(shrinking.height(now), from);
+        assert_eq!(shrinking.height(now + SESSION_TRANSITION), collapsed);
     }
 }

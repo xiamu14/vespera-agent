@@ -37,12 +37,14 @@ pub fn question(
     question: &Question,
     conversation_id: &str,
     answering: bool,
+    width: Pixels,
     cx: &Context<Vespera>,
 ) -> impl IntoElement {
     crate::question_card::QuestionCard {
         question: question.clone(),
         conversation_id: conversation_id.to_owned(),
         answering,
+        width,
         app: cx.entity().downgrade(),
     }
 }
